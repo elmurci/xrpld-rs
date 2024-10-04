@@ -1,0 +1,10 @@
+{
+    "network_id": "1",
+    "ips": [
+        {
+            "ip": "127.0.0.1",
+            "port": "51235"
+        }
+    ],
+    "ssl_verify": false
+}

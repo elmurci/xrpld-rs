@@ -1,0 +1,16 @@
+[package]
+name = "shared"
+version = "0.0.1"
+authors = ["Javi Romero <elmurci@gmail.com>"]
+edition = "2018"
+publish = false
+
+[dependencies]
+bytes = "1.7.2"
+prost = "0.13.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_with = "3.10.0"
+
+[build-dependencies]
+prost-build = "0.13.3"

@@ -1,0 +1,40 @@
+[package]
+name = "xrpld"
+version = "0.0.1"
+authors = ["Javi Romero <elmurci@gmail.com>"]
+edition = "2018"
+description = "Rust XRP Ledger daemon (on Rust)"
+readme = "README.md"
+repository = "https://github.com/elmurci/xrpld-rs"
+license = "MIT"
+publish = false
+
+[dependencies]
+config = { version = "0.14.0", features = ["json"] }
+clap = "4.5.18"
+num_cpus = "1.16.0"
+tokio = { version = "1.40.0", features = ["full"] }
+lazy_static = "1.5.0"
+async-timer = "0.7.4"
+
+# local
+logj = { path = "logj" }
+network = { path = "network" }
+shared = { path = "shared" }
+
+[build-dependencies]
+git2 = "0.10.0" # `cc` conflict with `secp256k1`, waiting https://github.com/rust-bitcoin/rust-secp256k1/pull/204
+
+[[bin]]
+name = "xrpld"
+path = "xrpld/main.rs"
+
+[workspace]
+members = [
+    "bs58_ripple",
+    "crypto",
+    "logj",
+    "network",
+    "protocol",
+    "shared"
+]
