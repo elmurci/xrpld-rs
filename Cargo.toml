@@ -18,8 +18,7 @@ lazy_static = "1.5.0"
 async-timer = "0.7.4"
 
 # local
-logj = { path = "logj" }
-network = { path = "network" }
+overlay = { path = "overlay" }
 shared = { path = "shared" }
 
 [build-dependencies]
@@ -31,10 +30,7 @@ path = "xrpld/main.rs"
 
 [workspace]
 members = [
-    "bs58_ripple",
-    "crypto",
-    "logj",
-    "network",
-    "protocol",
+    "overlay",
+    "proto",
     "shared"
 ]

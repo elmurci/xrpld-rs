@@ -1,13 +1,15 @@
 #![feature(ip)]
+#![feature(read_buf)]
 
 use quick_error::quick_error;
 use shared::enums::network::NetworkId;
+use shared::log;
 use shared::structs::config::{IpItem, XrpldConfig};
 use tokio::time::sleep;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use crypto::Secp256k1Keys;
+use shared::crypto::Secp256k1Keys;
 
 pub use peer::Peer;
 pub use peer_table::PeerTable;
@@ -75,20 +77,23 @@ impl Network {
             match self.connect_to(addr, self.network_id.clone(), self.ssl_verify).await {
                 Ok(peer) => break Some(peer),
                 Err(PeerError::Connect(error)) => {
-                    logj::error!("Failed connect to peer {}: {}", addr, error)
+                    log::error!("Failed connect to peer {}: {}", addr, error)
                 }
                 Err(PeerError::Handshake(error)) => {
-                    logj::error!("Failed handshake with peer {}: {}", addr, error);
+                    log::error!("Failed handshake with peer {}: {}", addr, error);
                 }
                 Err(PeerError::Unavailable(ips)) => {
-                    logj::error!("Peer unavailable, give {} peers", ips.len());
+                    log::error!("Peer unavailable, give {} peers", ips.len());
                     self.peer_table.on_redirect(ips).await;
                 }
             }
+            let connect = self.connect_to(addr, self.network_id.clone(), self.ssl_verify).await;
+
+            log::debug!("Connect to peer {}: {:?}", addr, connect);
         };
         
         if peer.is_none() {
-            logj::warn!("No peers available.");
+            log::warn!("No peers available.");
         }
 
         Ok(())

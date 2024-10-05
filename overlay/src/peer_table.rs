@@ -3,11 +3,11 @@ use std::str::FromStr;
 
 use futures::future::join_all;
 use rand::seq::SliceRandom;
+use shared::log;
 use shared::structs::config::IpItem;
 use tokio::net::lookup_host;
 use tokio::sync::Mutex;
 
-/// Simple peers endpoints collection for first time.
 #[derive(Debug)]
 pub struct PeerTable {
     addrs: Mutex<Vec<SocketAddr>>,
@@ -57,7 +57,7 @@ impl PeerTable {
             match lookup_host(node).await {
                 Ok(addrs) => addrs.collect(),
                 Err(error) => {
-                    logj::error!("Failed resolve bootstrap node {}: {}", node, error);
+                    log::error!("Failed resolve bootstrap node {}: {}", node, error);
                     vec![]
                 }
             }
@@ -68,19 +68,17 @@ impl PeerTable {
 
     /// Return pre-defined nodes.
     /// https://github.com/ripple/rippled/blob/1.5.0/src/ripple/overlay/impl/OverlayImpl.cpp#L536-L544
-    const fn get_bootstrap_peer_nodes() -> [&'static str; 3] {
+    const fn get_bootstrap_peer_nodes() -> [&'static str; 2] {
         [
             // Pool of servers operated by Ripple Labs Inc. - https://ripple.com
             "r.ripple.com:51235",
-            // Pool of servers operated by Alloy Networks - https://www.alloy.ee
-            "zaphod.alloy.ee:51235",
             // Pool of servers operated by ISRDC - https://isrdc.in
             "sahyadri.isrdc.in:51235",
         ]
     }
 
     /// Add peers endpoints on Endpoint message.
-    pub async fn on_endpoints(&self, endpoints: Vec<protocol::Endpoint>) {
+    pub async fn on_endpoints(&self, endpoints: Vec<proto::Endpoint>) {
         // TODO: Check endpoint with hops eq 1 (neighbor)
         let addrs = endpoints
             .iter()

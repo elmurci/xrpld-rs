@@ -4,7 +4,8 @@ use secp256k1::ecdsa::Signature;
 use secp256k1::rand::rngs::OsRng;
 use secp256k1::{Message, PublicKey, SecretKey};
 
-use super::SECP256K1;
+use super::base58_xrpl::{encode, Version};
+use super::{base58_xrpl, SECP256K1};
 
 /// Simplified interface to [`secp256k1`][secp256k1] crate.
 #[derive(Debug)]
@@ -35,7 +36,7 @@ impl Secp256k1Keys {
 
         let serialized = public_key.serialize();
         let public_key_bs58 =
-            bs58_ripple::encode(bs58_ripple::Version::NodePublic, &serialized[..]);
+            encode(Version::NodePublic, &serialized[..]);
 
         Secp256k1Keys {
             secret_key,

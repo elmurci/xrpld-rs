@@ -3,8 +3,8 @@
 
 use config::Config;
 use lazy_static::lazy_static;
-use network::Network;
-use shared::structs::config::XrpldConfig;
+use overlay::Network;
+use shared::{log, structs::config::XrpldConfig};
 use tokio::sync::RwLock;
 
 mod args;
@@ -16,8 +16,8 @@ lazy_static! {
 /// Start Rust XRPL node.
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
-    logj::init();
-    logj::info!("Starting node...");
+    log::init();
+    log::info!("Starting node...");
     let _args = args::get_args();
 
     let settings = Config::builder()
@@ -28,14 +28,14 @@ async fn main() {
 
     let config = settings.try_deserialize::<XrpldConfig>().unwrap();
 
-    logj::info!("Configuration loaded!");
+    log::info!("Configuration loaded!");
 
-    logj::debug!("Config {:?}", config);
+    log::debug!("Config {:?}", config);
 
     tokio::spawn(async move {
         let mut network = Network::new(config);
         if let Err(error) = network.start().await {
-            logj::error!("{}", error);
+            log::error!("{}", error);
             // std::process::exit(1);
         }
     }).await.unwrap();

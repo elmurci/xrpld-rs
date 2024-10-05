@@ -1,18 +1,7 @@
-#![warn(elided_lifetimes_in_paths)]
-#![warn(missing_debug_implementations)]
-#![warn(missing_docs)]
-#![warn(single_use_lifetimes)]
-#![warn(trivial_casts)]
-#![warn(trivial_numeric_casts)]
-#![warn(unused_import_braces)]
-#![warn(unused_qualifications)]
-#![warn(unused_results)]
-
-//! Base58 encode/decode for Ripple, with checks and prefixes.
+//! Base58 encode/decode for XRP Ledger, with checks and prefixes.
 
 /// Data prefix.
 /// https://github.com/ripple/rippled/blob/1.5.0/src/ripple/protocol/tokens.h#L29-L39
-#[allow(missing_docs)]
 #[derive(Debug)]
 pub enum Version {
     // None,

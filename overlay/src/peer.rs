@@ -1,29 +1,28 @@
 use std::borrow::Cow;
 use std::net::{IpAddr, SocketAddr};
+use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
 
 use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
-use crypto::secp256k1::ecdsa::Signature;
-use native_tls::TlsConnector;
+use shared::crypto::secp256k1::ecdsa::Signature;
 use quick_error::quick_error;
 
 use bytes::{Buf, BufMut, BytesMut};
-use crypto::secp256k1::{Message, PublicKey};
-use crypto::sha2::{Digest, Sha512};
-use crypto::Secp256k1Keys;
-use openssl::ssl::{SslRef, SslStream};
-use protocol::EncodeDecode;
+use shared::crypto::secp256k1::{Message, PublicKey};
+use shared::crypto::sha2::{Digest, Sha512};
+use shared::crypto::Secp256k1Keys;
+use openssl::ssl::{SslRef, SslVerifyMode};
+use proto::{EncodeDecode, Endpoints, Message as ProtoMessage, PingPong};
 use serde::{de, Deserialize, Deserializer, Serialize};
 use shared::enums::network::NetworkId;
-use tokio::io;
-use tokio::net::TcpStream;
+use shared::log;
+use tokio::io::{self, AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Mutex;
-use tokio_native_tls::TlsStream;
-use tokio::io::AsyncWriteExt;
-use tokio::io::AsyncReadExt;
-
+use openssl::ssl::{SslMethod, SslConnector};
+use tokio_openssl::SslStream;
+use tokio::net::TcpStream;
 use super::PeerTable;
 
 #[derive(Debug)]
@@ -39,14 +38,14 @@ pub struct Peer {
     node_key: Arc<Secp256k1Keys>,
     peer_table: Arc<PeerTable>,
     network_id: NetworkId,
-    //
     peer_addr: SocketAddr,
     ping_data: Mutex<PeerPing>,
-    // connection is complete mess right now, move to own struct
-    // (mix of openssl + TcpStream + ReadHalf/WriteHalf + BufStream?)
-    ssl: &'static SslRef,
-    stream_tx: Mutex<io::WriteHalf<TlsStream<TcpStream>>>,
-    stream_rx: Mutex<io::ReadHalf<TlsStream<TcpStream>>>,
+    // ssl: &'static SslRef,
+    // stream_tx: Mutex<io::WriteHalf<TlsStream<TcpStream>>>,
+    // stream_rx: Mutex<io::ReadHalf<TlsStream<TcpStream>>>,
+    stream: Mutex<SslStream<tokio::net::TcpStream>>,
+    ssl: Option<&'static SslRef>,
+    // TODO: add last message timestamp
 }
 
 impl Peer {
@@ -59,33 +58,27 @@ impl Peer {
         network_id: NetworkId,
         ssl_verify: bool,
     ) -> Result<Arc<Peer>, ConnectError> {
-
-        let socket = TcpStream::connect(&addr).await;
-
-        if socket.is_err() {
-            let err = socket.unwrap_err();
-            logj::warn!("Could not connect with peer: {}: {}", addr, err);
-            return Err(ConnectError::Io(err));
+        
+        let mut connector_builder = SslConnector::builder(SslMethod::tls()).unwrap();
+        if !ssl_verify {
+            connector_builder.set_verify(SslVerifyMode::NONE);
         }
 
-        let cx = TlsConnector::builder()
-            .use_sni(false)
-            .danger_accept_invalid_hostnames(!ssl_verify)
-            .danger_accept_invalid_certs(!ssl_verify)
-            .build()
-            .map_err(ConnectError::Tls).unwrap();
-        let cx = tokio_native_tls::TlsConnector::from(cx);
+        let connector = connector_builder.build();
+        
+        let tcp_stream = TcpStream::connect(addr).await;
 
-        let mut stream = cx.connect("", socket.unwrap()).await.unwrap();
-
-        let ssl = unsafe {
-            // TODO: use openssl directly, without tokio_tls and native-tls
-            // https://docs.rs/tokio-tls/0.3.0/src/tokio_tls/lib.rs.html#43-47
-            // AllowStd have size 64
-            (*(&stream as *const _ as *const SslStream<[u8; 64]>)).ssl()
-        };
-
-        let (stream_rx, stream_tx) = io::split(stream);
+        if tcp_stream.is_err() {
+            let err = tcp_stream.unwrap_err();
+            log::warn!("Could not connect with peer: {}: {}", addr, err);
+            return Err(ConnectError::Io(err));
+        }
+        
+        let ssl_stream = connector.configure().unwrap().into_ssl("localhost").unwrap();
+        let mut stream = SslStream::new(ssl_stream, tcp_stream.unwrap()).unwrap();
+        let _ = SslStream::connect(Pin::<_>::new(&mut stream)).await;
+        
+        log::debug!("Connected to server {:?}", addr);
 
         Ok(Arc::new(Peer {
             node_key,
@@ -96,14 +89,14 @@ impl Peer {
                 no_ping: 0,
                 seq: None,
             }),
-            ssl,
-            stream_tx: Mutex::new(stream_tx),
-            stream_rx: Mutex::new(stream_rx),
+            stream: Mutex::new(stream),
+            ssl: None,
         }))
     }
 
     /// Outgoing handshake process.
     pub async fn connect(self: &Arc<Self>) -> Result<(), HandshakeError> {
+        log::debug!("Starting handshake with: {}", self.peer_addr);
         self.handshake_send_request().await?;
         self.handshake_read_response().await?;
         Arc::clone(&self).spawn_read_messages();
@@ -113,6 +106,7 @@ impl Peer {
 
     /// Send handshake request.
     async fn handshake_send_request(&self) -> Result<(), HandshakeError> {
+        let mut stream = self.stream.lock().await;
         // TODO: get version from package
         // TODO: crawl private/public
         let mut content = format!(
@@ -130,25 +124,16 @@ impl Peer {
             self.network_id.value(),
             network_time(),
             self.node_key.get_public_key_bs58(),
-            self.handshake_create_signature()?
+            self.handshake_create_signature(stream.ssl()).await?
         );
-
-        logj::debug!("Handshake content {:?}", content);
 
         let remote = self.peer_addr.ip();
         if remote.is_global() {
             content += &format!("Remote-IP: {}\r\n", remote);
         }
 
-        // specified global ip from config
-        // Local-IP: {}
-
-        // Closed-Ledger: {}
-        // Previous-Ledger: {}
-
         content += "\r\n";
 
-        let mut stream = self.stream_tx.lock().await;
         let fut = stream.write_all(content.as_bytes());
         fut.await.map_err(HandshakeError::Io)
     }
@@ -156,8 +141,9 @@ impl Peer {
     /// Read peer handshake response for our handshake request.
     async fn handshake_read_response(&self) -> Result<(), HandshakeError> {
         let mut buf = BytesMut::new();
+        
+        let mut stream = self.stream.lock().await;
 
-        let mut stream = self.stream_rx.lock().await;
         let code = loop {
             let fut = stream.read_buf(&mut buf);
             if fut.await.map_err(HandshakeError::Io)? == 0 {
@@ -168,6 +154,7 @@ impl Peer {
             let mut headers = [httparse::EMPTY_HEADER; 32];
             let mut resp = httparse::Response::new(&mut headers);
             let status = resp.parse(&buf).expect("response parse success");
+
             if status.is_partial() {
                 continue;
             }
@@ -182,7 +169,11 @@ impl Peer {
             let get_header =
                 |name| find_header(name).ok_or_else(|| HandshakeError::MissingHeader(name));
 
+            log::debug!("get_header en handshake_read_response");
+
             let code = resp.code.unwrap();
+
+            log::debug!("code en handshake_read_response {}", code);
             if code == 101 {
                 // self.peer_user_agent = Some(get_header!("Server").to_string());
                 let _ = get_header("Server")?;
@@ -192,8 +183,10 @@ impl Peer {
                     return Err(HandshakeError::InvalidHeader("Connection", reason));
                 }
 
-                if get_header("Upgrade")? != "XRPL/2.1" {
-                    let reason = r#"Only "XRPL/2.1" supported right now"#.to_owned();
+                let upgrade_header = get_header("Upgrade")?;
+
+                if upgrade_header != "XRPL/2.1" && upgrade_header != "XRPL/2.2" {
+                    let reason = r#"Only "XRPL/2.1" or "XRPL/2.2" supported"#.to_owned();
                     return Err(HandshakeError::InvalidHeader("Upgrade", reason));
                 }
 
@@ -205,7 +198,8 @@ impl Peer {
                 if let Some(value) = find_header("Remote-IP") {
                     let parsed = value.parse::<IpAddr>();
                     let _ip = parsed.map_err(|e| HandshakeError::InvalidRemoteIp(e.to_string()))?;
-
+                    
+                    // TODO
                     // if ip.is_global() && `public ip specified in config` && ip != `specified global ip from config` {
                     //     let reason = format!("{} instead of {}", ip, ?);
                     //     return Err(HandshakeError::InvalidRemoteIp(reason));
@@ -252,12 +246,10 @@ impl Peer {
 
                 let public_key = get_header("Public-Key")?;
                 let sig = get_header("Session-Signature")?;
-                // self.peer_public_key = Some(self.handshake_verify_signature(sig, public_key)?);
-                let _ = self.handshake_verify_signature(sig, public_key)?;
 
-                // Crawl public
-                // Closed-Ledger W8hR7+Q1acWpc1fcKXA6J0Qa9pmJ4dxjvKkacx/6GC8=
-                // Previous-Ledger b2+kJlTVmP0zXTirE570dWaTSFDfnTM/fOftA2UoCxM=
+                let verify_signature = self.handshake_verify_signature(sig, public_key, stream.ssl()).await?;
+
+                log::debug!("verify_signature: {}", verify_signature);
 
                 buf.advance(status.unwrap());
             } else {
@@ -334,23 +326,25 @@ impl Peer {
     }
 
     /// Create message for create/verify signature.
-    fn handshake_mkshared(&self) -> Result<Message, HandshakeError> {
+    async fn handshake_mkshared(&self, ssl: &SslRef) -> Result<Message, HandshakeError> {
         let mut buf = Vec::<u8>::with_capacity(1024);
         buf.resize(buf.capacity(), 0);
 
-        let mut size = self.ssl.finished(&mut buf[..]);
+        log::debug!("Perico 0");
+
+        log::debug!("Perico 1");
+
+        let mut size = ssl.finished(&mut buf[..]);
         if size > buf.len() {
             buf.resize(size, 0);
-            size = self.ssl.finished(&mut buf[..]);
+            size = ssl.finished(&mut buf[..]);
         }
         let cookie1 = Sha512::digest(&buf[..size]);
 
-        logj::debug!("ssl {:?}", self.ssl);
-
-        let mut size = self.ssl.peer_finished(&mut buf[..]);
+        let mut size = ssl.peer_finished(&mut buf[..]);
         if size > buf.len() {
             buf.resize(size, 0);
-            size = self.ssl.peer_finished(&mut buf[..]);
+            size = ssl.peer_finished(&mut buf[..]);
         }
         let cookie2 = Sha512::digest(&buf[..size]);
 
@@ -361,24 +355,31 @@ impl Peer {
             .collect::<Vec<u8>>();
         let hash = Sha512::digest(&mix[..]);
 
-        Message::from_digest_slice(&hash[0..32]).map_err(|_| HandshakeError::InvalidMessage)
+        log::debug!("Perico 4");
+
+        let pac = Message::from_digest_slice(&hash[0..32]).map_err(|_| HandshakeError::InvalidMessage);
+
+        log::debug!("Perico 5");
+
+        pac
     }
 
     /// Create base64 encoded signature for handshake with node keys ([`Secp256k1Keys`][crypto::Secp256k1Keys]).
-    fn handshake_create_signature(&self) -> Result<String, HandshakeError> {
-        let msg = self.handshake_mkshared()?;
+    async fn handshake_create_signature(&self, ssl: &SslRef) -> Result<String, HandshakeError> {
+        let msg = self.handshake_mkshared(ssl).await?;
         let sig = self.node_key.sign(&msg).serialize_der();
         Ok(BASE64_STANDARD.encode(&sig))
     }
 
     /// Verify base64 encoded signature for handshake with base58 encoded Public Key.
     /// Return [`PublicKey`][crypto::secp256k1::PublicKey] on success.
-    fn handshake_verify_signature(
+    async fn handshake_verify_signature(
         &self,
         sig_header: Cow<'_, str>,
         pk_header: Cow<'_, str>,
+        ssl: &SslRef,
     ) -> Result<PublicKey, HandshakeError> {
-        let pk_bytes = bs58_ripple::decode(bs58_ripple::Version::NodePublic, &*pk_header)
+        let pk_bytes = shared::crypto::base58_xrpl::decode(shared::crypto::base58_xrpl::Version::NodePublic, &*pk_header)
             .map_err(|_| HandshakeError::InvalidPublicKey(pk_header.to_string()))?;
         let pk = PublicKey::from_slice(&pk_bytes)
             .map_err(|_| HandshakeError::InvalidPublicKey(pk_header.to_string()))?;
@@ -388,8 +389,10 @@ impl Peer {
         let sig = Signature::from_der(&sig_bytes)
             .map_err(|_| HandshakeError::InvalidSignature(sig_header.to_string()))?;
 
-        let msg = self.handshake_mkshared()?;
-        match crypto::SECP256K1.verify_ecdsa(&msg, &sig, &pk) {
+        log::debug!("handshake_verify_signature PRE handshake_mkshared");
+        let msg = self.handshake_mkshared(ssl).await?;
+        log::debug!("handshake_verify_signature POST handshake_mkshared");
+        match shared::crypto::SECP256K1.verify_ecdsa(&msg, &sig, &pk) {
             Ok(_) => Ok(pk),
             Err(_) => Err(HandshakeError::SignatureVerificationFailed),
         }
@@ -402,6 +405,8 @@ impl Peer {
             loop {
                 tokio::time::sleep(interval).await;
 
+                log::debug!("Send ping message to peer: {}", self.peer_addr);
+
                 let mut ping = self.ping_data.lock().await;
 
                 ping.no_ping += 1;
@@ -412,32 +417,33 @@ impl Peer {
                 if ping.seq.is_none() {
                     ping.seq = Some(rand::random::<u32>());
 
-                    let msg = protocol::PingPong::build_ping(ping.seq);
-                    Arc::clone(&self).spawn_send_message(protocol::Message::PingPong(msg));
+                    let msg = PingPong::build_ping(ping.seq);
+                    Arc::clone(&self).spawn_send_message(ProtoMessage::PingPong(msg));
                 }
             }
         });
     }
 
     /// Send message to peer.
-    pub async fn send_message(&self, msg: protocol::Message) -> Result<(), SendRecvError> {
+    pub async fn send_message(&self, msg: ProtoMessage) -> Result<(), SendRecvError> {
+        log::debug!("Send message to peer: {:?}", msg);
         let size = msg.encoded_len();
         let mut bytes = BytesMut::with_capacity(size + 4);
         // Uncompressed value, the top six bits of the first byte are 0.
         bytes.put_u32((size - 2) as u32); // 2 is message type
         msg.encode(&mut bytes).map_err(SendRecvError::Encode)?;
 
-        let mut stream = self.stream_tx.lock().await;
-        stream.write_all(&bytes).await.map_err(SendRecvError::Io)?;
+        let mut stream = self.stream.lock().await;
+        stream.write_all(&bytes).await.map_err(SendRecvError::Io);
         stream.flush().await.map_err(SendRecvError::Io)
     }
 
     /// Send message to peer in new asynchronous task.
-    pub fn spawn_send_message(self: Arc<Self>, msg: protocol::Message) {
+    pub fn spawn_send_message(self: Arc<Self>, msg: ProtoMessage) {
         let _join_handle = tokio::spawn(async move {
             // TODO: shutdown
             if let Err(error) = self.send_message(msg).await {
-                logj::error!("Peer send error: {}", error);
+                log::error!("Peer send error: {}", error);
             }
         });
     }
@@ -460,9 +466,12 @@ impl Peer {
 
             loop {
                 let msg = match self.read_message(&mut read_buf).await {
-                    Ok(msg) => msg,
+                    Ok(msg) => {
+                        log::debug!("Send message to peer: {:?}", msg);
+                        msg
+                    },
                     Err(error) => {
-                        logj::error!("Peer read error: {}", error);
+                        log::error!("Peer spawn_read_messages: {}", error);
                         println!("{:?}", hex::encode(&read_buf.chunk()));
                         break;
                     }
@@ -480,7 +489,7 @@ impl Peer {
                 // }
                 // // DEBUG
 
-                use protocol::Message::*;
+                use ProtoMessage::*;
 
                 let result = match msg {
                     PingPong(msg) => {
@@ -494,7 +503,7 @@ impl Peer {
                     _ => Ok(()),
                 };
                 if let Err(error) = result {
-                    logj::error!("Peer message handler error: {}", error);
+                    log::error!("Peer message handler error: {}", error);
                     break;
                 }
             }
@@ -504,14 +513,15 @@ impl Peer {
     async fn read_message(
         self: &Arc<Self>,
         mut read_buf: &mut Box<BytesMut>,
-    ) -> Result<protocol::Message, SendRecvError> {
+    ) -> Result<ProtoMessage, SendRecvError> {
         loop {
             let mut payload_size_buf = [0u8; 4];
-            let mut stream = self.stream_rx.lock().await;
+            let mut stream = self.stream.lock().await;
 
-            if let Err(error) = stream.read_exact(&mut payload_size_buf).await {
-                return Err(SendRecvError::Io(error));
-            }
+            // TODO: fix
+            // if let Err(error) = stream.read_exact(&mut payload_size_buf) {
+            //     return Err(SendRecvError::Io(error));
+            // }
 
             if payload_size_buf[0] & 0xFC != 0 {
                 let error = SendRecvError::UnknowVersionHeader(payload_size_buf[0]);
@@ -546,8 +556,8 @@ impl Peer {
             //     read_buf.advance_mut(bytes.len());
             // }
 
-            if protocol::Message::is_valid_type(&read_buf) {
-                let msg = protocol::Message::decode(&mut read_buf);
+            if ProtoMessage::is_valid_type(&read_buf) {
+                let msg = ProtoMessage::decode(&mut read_buf);
                 return Ok(msg.map_err(SendRecvError::Decode)?);
             }
         }
@@ -555,17 +565,17 @@ impl Peer {
 
     async fn on_message_ping(
         self: &Arc<Self>,
-        msg: protocol::PingPong,
+        msg: PingPong,
     ) -> Result<(), std::convert::Infallible> {
-        logj::debug!("Received ping message: {:?}", msg);
-        let msg = protocol::PingPong::build_pong(msg.sequence());
-        Arc::clone(self).spawn_send_message(protocol::Message::PingPong(msg));
+        log::debug!("Received ping message: {:?}", msg);
+        let msg = PingPong::build_pong(msg.sequence());
+        Arc::clone(self).spawn_send_message(ProtoMessage::PingPong(msg));
         Ok(())
     }
 
     async fn on_message_pong(
         self: &Arc<Self>,
-        msg: protocol::PingPong,
+        msg: PingPong,
     ) -> Result<(), std::convert::Infallible> {
         let mut ping = self.ping_data.lock().await;
         if ping.seq == msg.sequence() {
@@ -578,7 +588,7 @@ impl Peer {
 
     async fn on_message_endpoints(
         self: &Arc<Self>,
-        msg: protocol::Endpoints,
+        msg: Endpoints,
     ) -> Result<(), std::convert::Infallible> {
         let mut endpoints = msg.endpoints;
         for ep in endpoints.iter_mut().filter(|ep| ep.hops == 0) {
@@ -670,10 +680,10 @@ quick_error! {
         PayloadTooBig(size: usize) {
             display("Message payload too big: {}", size)
         }
-        Encode(error: protocol::EncodeError) {
+        Encode(error: proto::EncodeError) {
             display("Message encode error: {}", error)
         }
-        Decode(error: protocol::DecodeError) {
+        Decode(error: proto::DecodeError) {
             display("Message decode error: {}", error)
         }
     }

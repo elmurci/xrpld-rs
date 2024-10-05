@@ -113,6 +113,7 @@ impl Message {
     /// Check that message type is valid.
     pub fn is_valid_type<B: Buf>(buf: &B) -> bool {
         let bytes = buf.chunk();
+        println!("----------------------> bytes: {:?}", bytes);
         let ty = ((bytes[0] as u16) << 8) + (bytes[1] as u16);
         MessageType::is_valid(ty as i32)
     }
