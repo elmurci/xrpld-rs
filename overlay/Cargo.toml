@@ -1,26 +1,25 @@
 [package]
 name = "overlay"
-version = "0.0.1"
 authors = ["Javi Romero <elmurci@gmail.com>"]
-edition = "2018"
-publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 
 [dependencies]
-base64 = "0.22.1"
-bytes = "1.7.2"
-chrono = "0.4.38"
-futures = "0.3"
-hex = "0.4.2"
-httparse = "1.3.4"
-native-tls = "0.2.4"
-openssl = "0.10.66"
-quick-error = "2.0.1"
-rand = "0.8.5"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = { version = "1.0" }
-tokio = { version = "1.40.0", features = ["full"] }
-tokio-tls = "0.3.0"
-tokio-openssl = "0.6.5"
+tokio.workspace = true
+config.workspace = true
+lazy_static.workspace = true
+base64.workspace = true
+quick-error.workspace = true
+openssl.workspace = true
+serde.workspace = true
+tokio-openssl.workspace = true
+futures.workspace = true
+rand.workspace = true
+bytes.workspace = true
+native-tls.workspace = true
+hex.workspace = true
+serde_json.workspace = true
 
 # local
 proto = { path = "../proto" }

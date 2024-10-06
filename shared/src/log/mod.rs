@@ -1,5 +1,4 @@
 //! Simple logger, just JSON to Stdout.
-
 use std::io::{self, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
 

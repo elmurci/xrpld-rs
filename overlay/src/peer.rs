@@ -98,9 +98,9 @@ impl Peer {
     pub async fn connect(self: &Arc<Self>) -> Result<(), HandshakeError> {
         log::debug!("Starting handshake with: {}", self.peer_addr);
         self.handshake_send_request().await?;
-        self.handshake_read_response().await?;
-        Arc::clone(&self).spawn_read_messages();
-        Arc::clone(&self).spawn_ping_loop();
+        // self.handshake_read_response().await?;
+        // read incoming messages
+        // ping outgoing messages
         Ok(())
     }
 
@@ -139,191 +139,191 @@ impl Peer {
     }
 
     /// Read peer handshake response for our handshake request.
-    async fn handshake_read_response(&self) -> Result<(), HandshakeError> {
-        let mut buf = BytesMut::new();
+    // async fn handshake_read_response(&self) -> Result<(), HandshakeError> {
+    //     let mut buf = BytesMut::new();
         
-        let mut stream = self.stream.lock().await;
+    //     let mut stream = self.stream.lock().await;
 
-        let code = loop {
-            let fut = stream.read_buf(&mut buf);
-            if fut.await.map_err(HandshakeError::Io)? == 0 {
-                let error = io::Error::new(io::ErrorKind::UnexpectedEof, "early eof");
-                return Err(HandshakeError::Io(error));
-            }
+    //     let code = loop {
+    //         let fut = stream.read_buf(&mut buf);
+    //         if fut.await.map_err(HandshakeError::Io)? == 0 {
+    //             let error = io::Error::new(io::ErrorKind::UnexpectedEof, "early eof");
+    //             return Err(HandshakeError::Io(error));
+    //         }
 
-            let mut headers = [httparse::EMPTY_HEADER; 32];
-            let mut resp = httparse::Response::new(&mut headers);
-            let status = resp.parse(&buf).expect("response parse success");
+    //         let mut headers = [httparse::EMPTY_HEADER; 32];
+    //         let mut resp = httparse::Response::new(&mut headers);
+    //         let status = resp.parse(&buf).expect("response parse success");
 
-            if status.is_partial() {
-                continue;
-            }
+    //         if status.is_partial() {
+    //             continue;
+    //         }
 
-            let find_header = |name| {
-                resp.headers
-                    .iter()
-                    .find(|h| h.name.eq_ignore_ascii_case(name))
-                    .map(|h| String::from_utf8_lossy(h.value))
-            };
+    //         let find_header = |name| {
+    //             resp.headers
+    //                 .iter()
+    //                 .find(|h| h.name.eq_ignore_ascii_case(name))
+    //                 .map(|h| String::from_utf8_lossy(h.value))
+    //         };
 
-            let get_header =
-                |name| find_header(name).ok_or_else(|| HandshakeError::MissingHeader(name));
+    //         let get_header =
+    //             |name| find_header(name).ok_or_else(|| HandshakeError::MissingHeader(name));
 
-            log::debug!("get_header en handshake_read_response");
+    //         log::debug!("get_header en handshake_read_response");
 
-            let code = resp.code.unwrap();
+    //         let code = resp.code.unwrap();
 
-            log::debug!("code en handshake_read_response {}", code);
-            if code == 101 {
-                // self.peer_user_agent = Some(get_header!("Server").to_string());
-                let _ = get_header("Server")?;
+    //         log::debug!("code en handshake_read_response {}", code);
+    //         if code == 101 {
+    //             // self.peer_user_agent = Some(get_header!("Server").to_string());
+    //             let _ = get_header("Server")?;
 
-                if get_header("Connection")? != "Upgrade" {
-                    let reason = r#"expect "Upgrade""#.to_owned();
-                    return Err(HandshakeError::InvalidHeader("Connection", reason));
-                }
+    //             if get_header("Connection")? != "Upgrade" {
+    //                 let reason = r#"expect "Upgrade""#.to_owned();
+    //                 return Err(HandshakeError::InvalidHeader("Connection", reason));
+    //             }
 
-                let upgrade_header = get_header("Upgrade")?;
+    //             let upgrade_header = get_header("Upgrade")?;
 
-                if upgrade_header != "XRPL/2.1" && upgrade_header != "XRPL/2.2" {
-                    let reason = r#"Only "XRPL/2.1" or "XRPL/2.2" supported"#.to_owned();
-                    return Err(HandshakeError::InvalidHeader("Upgrade", reason));
-                }
+    //             if upgrade_header != "XRPL/2.1" && upgrade_header != "XRPL/2.2" {
+    //                 let reason = r#"Only "XRPL/2.1" or "XRPL/2.2" supported"#.to_owned();
+    //                 return Err(HandshakeError::InvalidHeader("Upgrade", reason));
+    //             }
 
-                if !get_header("Connect-As")?.eq_ignore_ascii_case("peer") {
-                    let reason = r#"Only "Peer" supported right now"#.to_owned();
-                    return Err(HandshakeError::InvalidHeader("Connect-As", reason));
-                }
+    //             if !get_header("Connect-As")?.eq_ignore_ascii_case("peer") {
+    //                 let reason = r#"Only "Peer" supported right now"#.to_owned();
+    //                 return Err(HandshakeError::InvalidHeader("Connect-As", reason));
+    //             }
 
-                if let Some(value) = find_header("Remote-IP") {
-                    let parsed = value.parse::<IpAddr>();
-                    let _ip = parsed.map_err(|e| HandshakeError::InvalidRemoteIp(e.to_string()))?;
+    //             if let Some(value) = find_header("Remote-IP") {
+    //                 let parsed = value.parse::<IpAddr>();
+    //                 let _ip = parsed.map_err(|e| HandshakeError::InvalidRemoteIp(e.to_string()))?;
                     
-                    // TODO
-                    // if ip.is_global() && `public ip specified in config` && ip != `specified global ip from config` {
-                    //     let reason = format!("{} instead of {}", ip, ?);
-                    //     return Err(HandshakeError::InvalidRemoteIp(reason));
-                    // }
-                }
+    //                 // TODO
+    //                 // if ip.is_global() && `public ip specified in config` && ip != `specified global ip from config` {
+    //                 //     let reason = format!("{} instead of {}", ip, ?);
+    //                 //     return Err(HandshakeError::InvalidRemoteIp(reason));
+    //                 // }
+    //             }
 
-                if let Some(value) = find_header("Local-IP") {
-                    let parsed = value.parse::<IpAddr>();
-                    let ip = parsed.map_err(|e| HandshakeError::InvalidLocalIp(e.to_string()))?;
+    //             if let Some(value) = find_header("Local-IP") {
+    //                 let parsed = value.parse::<IpAddr>();
+    //                 let ip = parsed.map_err(|e| HandshakeError::InvalidLocalIp(e.to_string()))?;
 
-                    let remote = self.peer_addr.ip();
-                    if remote.is_global() && remote != ip {
-                        let reason = format!("{} instead of {}", ip, remote);
-                        return Err(HandshakeError::InvalidLocalIp(reason));
-                    }
-                }
+    //                 let remote = self.peer_addr.ip();
+    //                 if remote.is_global() && remote != ip {
+    //                     let reason = format!("{} instead of {}", ip, remote);
+    //                     return Err(HandshakeError::InvalidLocalIp(reason));
+    //                 }
+    //             }
 
-                let network_id = match find_header("Network-Id") {
-                    Some(value) => value
-                        .parse::<NetworkId>()
-                        .map_err(|e| HandshakeError::InvalidNetworkId(e.to_string()))?,
-                    None => NetworkId::Main,
-                };
-                if network_id != self.network_id {
-                    let expected = self.network_id.value();
-                    let received = network_id.value();
-                    let reason = format!("{} instead of {}", received, expected);
-                    return Err(HandshakeError::InvalidNetworkId(reason));
-                }
+    //             let network_id = match find_header("Network-Id") {
+    //                 Some(value) => value
+    //                     .parse::<NetworkId>()
+    //                     .map_err(|e| HandshakeError::InvalidNetworkId(e.to_string()))?,
+    //                 None => NetworkId::Main,
+    //             };
+    //             if network_id != self.network_id {
+    //                 let expected = self.network_id.value();
+    //                 let received = network_id.value();
+    //                 let reason = format!("{} instead of {}", received, expected);
+    //                 return Err(HandshakeError::InvalidNetworkId(reason));
+    //             }
 
-                if let Some(value) = find_header("Network-Time") {
-                    let peer_time = value
-                        .parse::<u64>()
-                        .map_err(|e| HandshakeError::InvalidNetworkTime(e.to_string()))?;
-                    let local_time = network_time();
+    //             if let Some(value) = find_header("Network-Time") {
+    //                 let peer_time = value
+    //                     .parse::<u64>()
+    //                     .map_err(|e| HandshakeError::InvalidNetworkTime(e.to_string()))?;
+    //                 let local_time = network_time();
 
-                    use std::cmp::{max, min};
-                    let diff = max(peer_time, local_time) - min(peer_time, local_time);
-                    if diff > 20 {
-                        let reason = "Peer clock is too far off".to_owned();
-                        return Err(HandshakeError::InvalidNetworkTime(reason));
-                    }
-                }
+    //                 use std::cmp::{max, min};
+    //                 let diff = max(peer_time, local_time) - min(peer_time, local_time);
+    //                 if diff > 20 {
+    //                     let reason = "Peer clock is too far off".to_owned();
+    //                     return Err(HandshakeError::InvalidNetworkTime(reason));
+    //                 }
+    //             }
 
-                let public_key = get_header("Public-Key")?;
-                let sig = get_header("Session-Signature")?;
+    //             let public_key = get_header("Public-Key")?;
+    //             let sig = get_header("Session-Signature")?;
 
-                let verify_signature = self.handshake_verify_signature(sig, public_key, stream.ssl()).await?;
+    //             let verify_signature = self.handshake_verify_signature(sig, public_key, stream.ssl()).await?;
 
-                log::debug!("verify_signature: {}", verify_signature);
+    //             log::debug!("verify_signature: {}", verify_signature);
 
-                buf.advance(status.unwrap());
-            } else {
-                let body_size = match find_header("Content-Length") {
-                    Some(header) => Some(header.parse::<usize>().map_err(|error| {
-                        HandshakeError::InvalidHeader("Content-Length", error.to_string())
-                    })?),
-                    None => None,
-                };
+    //             buf.advance(status.unwrap());
+    //         } else {
+    //             let body_size = match find_header("Content-Length") {
+    //                 Some(header) => Some(header.parse::<usize>().map_err(|error| {
+    //                     HandshakeError::InvalidHeader("Content-Length", error.to_string())
+    //                 })?),
+    //                 None => None,
+    //             };
 
-                buf.advance(status.unwrap());
+    //             buf.advance(status.unwrap());
 
-                // TODO: parse on the fly for chunked-encoding
-                // TODO: read exact content-length
-                loop {
-                    let fut = stream.read_buf(&mut buf);
-                    if fut.await.map_err(HandshakeError::Io)? == 0 {
-                        break;
-                    }
-                }
+    //             // TODO: parse on the fly for chunked-encoding
+    //             // TODO: read exact content-length
+    //             loop {
+    //                 let fut = stream.read_buf(&mut buf);
+    //                 if fut.await.map_err(HandshakeError::Io)? == 0 {
+    //                     break;
+    //                 }
+    //             }
 
-                // chunked-encoding...
-                if body_size.is_none() {
-                    let mut buf2 = BytesMut::with_capacity(buf.len());
-                    while !buf.is_empty() {
-                        let status = match httparse::parse_chunk_size(&buf) {
-                            Ok(status) => status,
-                            Err(_) => return Err(HandshakeError::InvalidChunkedBody(buf)),
-                        };
+    //             // chunked-encoding...
+    //             if body_size.is_none() {
+    //                 let mut buf2 = BytesMut::with_capacity(buf.len());
+    //                 while !buf.is_empty() {
+    //                     let status = match httparse::parse_chunk_size(&buf) {
+    //                         Ok(status) => status,
+    //                         Err(_) => return Err(HandshakeError::InvalidChunkedBody(buf)),
+    //                     };
 
-                        if status.is_partial() {
-                            return Err(HandshakeError::InvalidChunkedBody(buf));
-                        }
+    //                     if status.is_partial() {
+    //                         return Err(HandshakeError::InvalidChunkedBody(buf));
+    //                     }
 
-                        let (start, size) = status.unwrap();
-                        if size == 0 {
-                            break;
-                        }
+    //                     let (start, size) = status.unwrap();
+    //                     if size == 0 {
+    //                         break;
+    //                     }
 
-                        let end = start + size as usize;
-                        buf2.extend_from_slice(&buf.chunk()[start..end]);
-                        buf.advance(end);
-                    }
+    //                     let end = start + size as usize;
+    //                     buf2.extend_from_slice(&buf.chunk()[start..end]);
+    //                     buf.advance(end);
+    //                 }
 
-                    buf = buf2;
-                }
-            }
+    //                 buf = buf2;
+    //             }
+    //         }
 
-            break code;
-        };
+    //         break code;
+    //     };
 
-        match code {
-            101 => {
-                if !buf.is_empty() {
-                    panic!("Read more data than expected on successful handshake...");
-                }
+    //     match code {
+    //         101 => {
+    //             if !buf.is_empty() {
+    //                 panic!("Read more data than expected on successful handshake...");
+    //             }
 
-                Ok(())
-            }
-            400 => Err(HandshakeError::BadRequest(
-                String::from_utf8_lossy(&buf).trim().to_string(),
-            )),
-            503 => match serde_json::from_slice::<PeerUnavailableBody>(&buf) {
-                Ok(body) => Err(HandshakeError::Unavailable(body.ips)),
-                Err(_) => Err(HandshakeError::UnavailableBadBody(
-                    String::from_utf8_lossy(&buf).to_string(),
-                )),
-            },
-            _ => Err(HandshakeError::UnexpectedHttpStatus(
-                code,
-                String::from_utf8_lossy(&buf).trim().to_string(),
-            )),
-        }
-    }
+    //             Ok(())
+    //         }
+    //         400 => Err(HandshakeError::BadRequest(
+    //             String::from_utf8_lossy(&buf).trim().to_string(),
+    //         )),
+    //         503 => match serde_json::from_slice::<PeerUnavailableBody>(&buf) {
+    //             Ok(body) => Err(HandshakeError::Unavailable(body.ips)),
+    //             Err(_) => Err(HandshakeError::UnavailableBadBody(
+    //                 String::from_utf8_lossy(&buf).to_string(),
+    //             )),
+    //         },
+    //         _ => Err(HandshakeError::UnexpectedHttpStatus(
+    //             code,
+    //             String::from_utf8_lossy(&buf).trim().to_string(),
+    //         )),
+    //     }
+    // }
 
     /// Create message for create/verify signature.
     async fn handshake_mkshared(&self, ssl: &SslRef) -> Result<Message, HandshakeError> {
@@ -465,17 +465,21 @@ impl Peer {
             // // DEBUG
 
             loop {
-                let msg = match self.read_message(&mut read_buf).await {
-                    Ok(msg) => {
-                        log::debug!("Send message to peer: {:?}", msg);
-                        msg
-                    },
-                    Err(error) => {
-                        log::error!("Peer spawn_read_messages: {}", error);
-                        println!("{:?}", hex::encode(&read_buf.chunk()));
-                        break;
-                    }
-                };
+                let mut st = self.stream.lock().await;
+                let mut line = String::with_capacity(512);
+                let pepe = st.read_to_string(&mut line).await;
+                log::debug!("***************** line: {:?}", line);
+                // let msg = match self.read_message(&mut read_buf).await {
+                //     Ok(msg) => {
+                //         log::debug!("***** Send message to peer: {:?}", msg);
+                //         msg
+                //     },
+                //     Err(error) => {
+                //         log::error!("Error: Peer spawn_read_messages: {}", error);
+                //         println!("{:?}", hex::encode(&read_buf.chunk()));
+                //         break;
+                //     }
+                // };
 
                 // // DEBUG
                 // let dbg = format!("{:?}", msg);
@@ -489,79 +493,80 @@ impl Peer {
                 // }
                 // // DEBUG
 
-                use ProtoMessage::*;
+                // use ProtoMessage::*;
 
-                let result = match msg {
-                    PingPong(msg) => {
-                        if msg.is_ping() {
-                            self.on_message_ping(msg).await
-                        } else {
-                            self.on_message_pong(msg).await
-                        }
-                    }
-                    Endpoints(msg) => self.on_message_endpoints(msg).await,
-                    _ => Ok(()),
-                };
-                if let Err(error) = result {
-                    log::error!("Peer message handler error: {}", error);
-                    break;
-                }
+                // let result = match msg {
+                //     PingPong(msg) => {
+                //         if msg.is_ping() {
+                //             self.on_message_ping(msg).await
+                //         } else {
+                //             self.on_message_pong(msg).await
+                //         }
+                //     }
+                //     Endpoints(msg) => self.on_message_endpoints(msg).await,
+                //     _ => Ok(()),
+                // };
+                // if let Err(error) = result {
+                //     log::error!("Peer message handler error: {}", error);
+                //     break;
+                // }
             }
         });
     }
 
-    async fn read_message(
-        self: &Arc<Self>,
-        mut read_buf: &mut Box<BytesMut>,
-    ) -> Result<ProtoMessage, SendRecvError> {
-        loop {
-            let mut payload_size_buf = [0u8; 4];
-            let mut stream = self.stream.lock().await;
+    // async fn read_message(
+    //     self: &Arc<Self>,
+    //     mut read_buf: &mut Box<BytesMut>,
+    // ) -> Result<ProtoMessage, SendRecvError> {
+    //     loop {
+    //         let mut payload_size_buf = [0u8; 4];
+    //         let mut stream = self.stream.lock().await;
 
-            // TODO: fix
-            // if let Err(error) = stream.read_exact(&mut payload_size_buf) {
-            //     return Err(SendRecvError::Io(error));
-            // }
+    //         if let Err(error) = stream.read_exact(&mut payload_size_buf).await {
+    //             return Err(SendRecvError::Io(error));
+    //         }
 
-            if payload_size_buf[0] & 0xFC != 0 {
-                let error = SendRecvError::UnknowVersionHeader(payload_size_buf[0]);
-                return Err(error);
-            }
+    //         if payload_size_buf[0] & 0xFC != 0 {
+    //             let error = SendRecvError::UnknowVersionHeader(payload_size_buf[0]);
+    //             return Err(error);
+    //         }
 
-            let payload_size = u32::from_be_bytes(payload_size_buf) as usize;
-            if payload_size > 64 * 1024 * 1024 {
-                let error = SendRecvError::PayloadTooBig(payload_size);
-                return Err(error);
-            }
+    //         let payload_size = u32::from_be_bytes(payload_size_buf) as usize;
+    //         if payload_size > 64 * 1024 * 1024 {
+    //             let error = SendRecvError::PayloadTooBig(payload_size);
+    //             return Err(error);
+    //         }
 
-            let msg_size = payload_size + 2;
-            if msg_size > read_buf.capacity() {
-                let size = std::cmp::max(msg_size, 128 * 1024);
-                *read_buf = Box::new(BytesMut::with_capacity(size));
-            };
+    //         let msg_size = payload_size + 2;
+    //         if msg_size > read_buf.capacity() {
+    //             let size = std::cmp::max(msg_size, 128 * 1024);
+    //             *read_buf = Box::new(BytesMut::with_capacity(size));
+    //         };
 
-            // let bytes = read_buf.bytes();
-            // let bytes = unsafe {
-            //     core::slice::from_raw_parts_mut(
-            //         bytes[0].as_mut_ptr(),
-            //         std::cmp::min(bytes.len(), msg_size),
-            //     )
-            // };
-            // assert!(bytes.len() >= msg_size, "Not enough bytes for read message");
+    //         let bytes = read_buf.bytes_mut();
+    //         let bytes = unsafe {
+    //             core::slice::from_raw_parts_mut(
+    //                 bytes[0].as_mut_ptr(),
+    //                 std::cmp::min(bytes.len(), msg_size),
+    //             )
+    //         };
+    //         println!("{} bytes, msg_size {}", bytes.len(), msg_size);
+    //         assert!(bytes.len() >= msg_size, "Not enough bytes for read message");
 
-            // if let Err(error) = stream.read_exact(bytes).await {
-            //     return Err(SendRecvError::Io(error));
-            // }
-            // unsafe {
-            //     read_buf.advance_mut(bytes.len());
-            // }
+    //         // TODO: FIX!
+    //         // if let Err(error) = stream.read_exact(bytes).await {
+    //         //     return Err(SendRecvError::Io(error));
+    //         // }
+    //         unsafe {
+    //             read_buf.advance_mut(bytes.len());
+    //         }
 
-            if ProtoMessage::is_valid_type(&read_buf) {
-                let msg = ProtoMessage::decode(&mut read_buf);
-                return Ok(msg.map_err(SendRecvError::Decode)?);
-            }
-        }
-    }
+    //         if proto::Message::is_valid_type(&read_buf) {
+    //             let msg = proto::Message::decode(&mut read_buf);
+    //             return Ok(msg.map_err(SendRecvError::Decode)?);
+    //         }
+    //     }
+    // }
 
     async fn on_message_ping(
         self: &Arc<Self>,
