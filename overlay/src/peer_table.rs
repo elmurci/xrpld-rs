@@ -93,6 +93,7 @@ impl PeerTable {
     }
 
     /// Get and remove address from peer table.
+    /// TODO: I don't quite understand this method
     pub async fn get_peer_address(&self) -> Option<SocketAddr> {
         let mut addrs = self.addrs.lock().await;
         loop {

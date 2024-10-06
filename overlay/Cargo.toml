@@ -20,6 +20,7 @@ bytes.workspace = true
 native-tls.workspace = true
 hex.workspace = true
 serde_json.workspace = true
+httparse.workspace = true
 
 # local
 proto = { path = "../proto" }
