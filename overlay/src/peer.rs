@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::io::Read;
 use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
 use std::str::FromStr;
@@ -143,18 +144,22 @@ impl Peer {
 
         let code = loop {
             let fut = stream.read_buf(&mut buf);
+
             if fut.await.map_err(HandshakeError::Io)? == 0 {
                 let error = io::Error::new(io::ErrorKind::UnexpectedEof, "early eof");
                 return Err(HandshakeError::Io(error));
             }
 
             let mut headers = [httparse::EMPTY_HEADER; 32];
+
             let mut resp = httparse::Response::new(&mut headers);
             let status = resp.parse(&buf).expect("response parse success");
 
             if status.is_partial() {
                 continue;
             }
+
+            log::debug!("Handshake response status {:?}", status);
 
             let find_header = |name| {
                 resp.headers
@@ -242,9 +247,9 @@ impl Peer {
                 let public_key = get_header("Public-Key")?;
                 let sig = get_header("Session-Signature")?;
 
-                let verify_signature = self.handshake_verify_signature(sig, public_key, stream.ssl()).await?;
-
-                log::debug!("OVERLAY:PEER Peer Public Key: {}", verify_signature);
+                let _verify_signature = self.handshake_verify_signature(sig, public_key.clone(), stream.ssl()).await?;
+                
+                log::debug!("OVERLAY:PEER Peer Public Key: {}", public_key.to_string());
 
                 buf.advance(status.unwrap());
             } else {
@@ -299,7 +304,10 @@ impl Peer {
         match code {
             101 => {
                 if !buf.is_empty() {
-                    panic!("Read more data than expected on successful handshake...");
+                    log::error!("Read more data than expected on successful handshake...");
+                    return Err(HandshakeError::BadRequest(
+                        "Read more data than expected on successful handshake...".to_string(),
+                    ));
                 }
 
                 Ok(())
@@ -391,8 +399,6 @@ impl Peer {
             loop {
                 tokio::time::sleep(interval).await;
 
-                log::debug!("OVERLAY:PEER Send ping message to peer: {}", self.peer_addr);
-
                 let mut ping = self.ping_data.lock().await;
 
                 ping.no_ping += 1;
@@ -445,22 +451,52 @@ impl Peer {
             // When buffer not enough we allocate new.
             let mut read_buf = Box::new(BytesMut::new());
 
+            // GetPeerShardInfo: 1
+            // Endpoints: 16
+            // HaveSet: 316
+            // Manifests: 1
+            // Transaction: 1021
+            // Ping: 1
+            // StatusChange: 44
+            // ProposeLedger: 5233
+            // Validatorlist: 1
+            // Validation: 814
+
+            // mtMANIFESTS             = 2;
+            // mtPING                  = 3;
+            // mtCLUSTER               = 5;
+            // mtENDPOINTS             = 15;
+            // mtTRANSACTION           = 30;
+            // mtGET_LEDGER            = 31;
+            // mtLEDGER_DATA           = 32;
+            // mtPROPOSE_LEDGER        = 33;
+            // mtSTATUS_CHANGE         = 34;
+            // mtHAVE_SET              = 35;
+            // mtVALIDATION            = 41;
+            // mtGET_OBJECTS           = 42;
+            // mtGET_SHARD_INFO        = 50;
+            // mtSHARD_INFO            = 51;
+            // mtGET_PEER_SHARD_INFO   = 52;
+            // mtPEER_SHARD_INFO       = 53;
+            // mtVALIDATORLIST         = 54;
+
             loop {
-                let mut st = self.stream.lock().await;
-                let mut line = String::with_capacity(512);
-                let pepe = st.read_to_string(&mut line).await;
+                
+                log::debug!("OVERLAY:PEER pepico: spawn_read_messages");
 
                 let msg = match self.read_message(&mut read_buf).await {
                     Ok(msg) => {
-                        log::debug!("***** Send message to peer: {:?}", msg);
+                        log::debug!("OVERLAY:PEER tbd: {:?}", msg);
                         msg
                     },
                     Err(error) => {
-                        log::error!("Error: Peer spawn_read_messages: {}", error);
-                        println!("{:?}", hex::encode(&read_buf.chunk()));
+                        log::error!("OVERLAY:PEER Error: Peer spawn_read_messages: {}", error);
+                        log::debug!("{:?}", hex::encode(&read_buf.chunk()));
                         break;
                     }
                 };
+
+                log::debug!("OVERLAY:PEER pepico MSG: spawn_read_messages");
 
                 use ProtoMessage::*;
 
@@ -512,30 +548,29 @@ impl Peer {
                 *read_buf = Box::new(BytesMut::with_capacity(size));
             };
 
-            log::debug!("read_buf {}", read_buf.len());
+            let bytes = read_buf.bytes_mut();
 
-            // let bytes = read_buf.bytes_mut();
-            // let bytes = unsafe {
-            //     core::slice::from_raw_parts_mut(
-            //         bytes[0].as_mut_ptr(),
-            //         std::cmp::min(bytes.len(), msg_size),
-            //     )
-            // };
-            // println!("{} bytes, msg_size {}", bytes.len(), msg_size);
-            // assert!(bytes.len() >= msg_size, "Not enough bytes for read message");
+            log::debug!("OVERLAY:PEER {:?}", bytes);
 
-            // // TODO: FIX!
-            // if let Err(error) = stream.read_exact(bytes).await {
-            //     return Err(SendRecvError::Io(error));
-            // }
-            // unsafe {
-            //     read_buf.advance_mut(bytes.len());
-            // }
+            let bytes = unsafe {
+                core::slice::from_raw_parts_mut(
+                    bytes[0].as_mut_ptr(),
+                    std::cmp::min(bytes.len(), msg_size),
+                )
+            };
+            assert!(bytes.len() >= msg_size, "Not enough bytes for read message");
 
-            // if proto::Message::is_valid_type(&read_buf) {
-            //     let msg = proto::Message::decode(&mut read_buf);
-            //     return Ok(msg.map_err(SendRecvError::Decode)?);
-            // }
+            if let Err(error) = stream.read_exact(bytes).await {
+                return Err(SendRecvError::Io(error));
+            }
+            unsafe {
+                read_buf.advance_mut(bytes.len());
+            }
+
+            if proto::Message::is_valid_type(&read_buf) {
+                let msg = proto::Message::decode(&mut read_buf);
+                return Ok(msg.map_err(SendRecvError::Decode)?);
+            }
         }
     }
 

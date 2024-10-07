@@ -69,24 +69,24 @@ impl Network {
             log::debug!("OVERLAY:NETWORK Connecting to peer {}...", addr);
             match self.connect_to(addr, self.network_id.clone(), self.ssl_verify).await {
                 Ok(peer) => {
-                    log::debug!("OVERLAY:NETWORK Connected successfully to peer {}...", addr);
+                    log::info!("OVERLAY:NETWORK Connected successfully to peer {}...", addr);
                     break Some(peer)
                 },
                 Err(PeerError::Connect(error)) => {
-                    log::error!("OVERLAY:NETWORK Failed connect to peer {}: {}", addr, error)
+                    log::warn!("OVERLAY:NETWORK Failed connect to peer {}: {}", addr, error)
                 }
                 Err(PeerError::Handshake(error)) => {
-                    log::error!("OVERLAY:NETWORK Failed handshake with peer {}: {}", addr, error);
+                    log::warn!("OVERLAY:NETWORK Failed handshake with peer {}: {}", addr, error);
                 }
                 Err(PeerError::Unavailable(ips)) => {
-                    log::error!("OVERLAY:NETWORK Peer unavailable, give {} peers", ips.len());
+                    log::warn!("OVERLAY:NETWORK Peer unavailable, give {} peers", ips.len());
                     self.peer_table.on_redirect(ips).await;
                 }
             }
         };
         
         if peer.is_none() {
-            log::warn!("OVERLAY:NETWORK No peers on peers table to connect");
+            log::info!("OVERLAY:NETWORK No peers on peers table to connect");
         }
 
         Ok(())

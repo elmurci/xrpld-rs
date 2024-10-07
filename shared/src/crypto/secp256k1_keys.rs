@@ -5,7 +5,7 @@ use secp256k1::rand::rngs::OsRng;
 use secp256k1::{Message, PublicKey, SecretKey};
 
 use super::base58_xrpl::{encode, Version};
-use super::{base58_xrpl, SECP256K1};
+use super::SECP256K1;
 
 /// Simplified interface to [`secp256k1`][secp256k1] crate.
 #[derive(Debug)]
