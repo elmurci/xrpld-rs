@@ -276,6 +276,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "consensus"
+version = "0.0.1"
+dependencies = [
+ "shared",
+]
+
+[[package]]
 name = "const-random"
 version = "0.1.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"

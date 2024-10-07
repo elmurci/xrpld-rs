@@ -16,8 +16,9 @@ lazy_static! {
 /// Start Rust XRPL node.
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
+    const VERSION: &str = env!("CARGO_PKG_VERSION");
     log::init();
-    log::info!("Starting node...");
+    log::info!("Starting node (v{})", VERSION);
     let _args = args::get_args();
 
     let settings = Config::builder()
@@ -35,8 +36,8 @@ async fn main() {
     tokio::spawn(async move {
         let mut network = Network::new(config);
         if let Err(error) = network.start().await {
-            log::error!("{}", error);
-            // std::process::exit(1);
+            log::error!("XRPLD:APP {}", error);
+            std::process::exit(1);
         }
     }).await.unwrap();
 

@@ -66,27 +66,28 @@ impl Network {
                 Some(addr) => addr,
                 None => break None,
             };
-            log::debug!("OVERLAY:NETWORK Connecting to peer {}...", addr);
+            log::debug!("NET:Updt Connecting to peer {}...", addr);
             match self.connect_to(addr, self.network_id.clone(), self.ssl_verify).await {
                 Ok(peer) => {
-                    log::info!("OVERLAY:NETWORK Connected successfully to peer {}...", addr);
+                    log::info!("NET:Updt Connected successfully to peer {}...", addr);
                     break Some(peer)
                 },
                 Err(PeerError::Connect(error)) => {
-                    log::warn!("OVERLAY:NETWORK Failed connect to peer {}: {}", addr, error)
+                    log::warn!("NET:Updt Failed connect to peer {}: {}", addr, error)
                 }
                 Err(PeerError::Handshake(error)) => {
-                    log::warn!("OVERLAY:NETWORK Failed handshake with peer {}: {}", addr, error);
+                    log::warn!("NET:Updt Failed handshake with peer {}: {}", addr, error);
                 }
                 Err(PeerError::Unavailable(ips)) => {
-                    log::warn!("OVERLAY:NETWORK Peer unavailable, give {} peers", ips.len());
+                    log::warn!("NET:Updt Peer unavailable, give {} peers", ips.len());
                     self.peer_table.on_redirect(ips).await;
                 }
             }
         };
         
         if peer.is_none() {
-            log::info!("OVERLAY:NETWORK No peers on peers table to connect");
+            log::info!("NET:Updt No peers on peers table to connect");
+            // TODO: no successful peers, we should re try to connect to bootstrap nodes
         }
 
         Ok(())

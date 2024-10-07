@@ -68,7 +68,7 @@ impl Peer {
 
         if tcp_stream.is_err() {
             let err = tcp_stream.unwrap_err();
-            log::warn!("OVERLAY:PEER Could not connect with peer: {}: {}", addr, err);
+            log::warn!("NET:Peer Could not connect with peer: {}: {}", addr, err);
             return Err(ConnectError::Io(err));
         }
         
@@ -76,7 +76,7 @@ impl Peer {
         let mut stream = SslStream::new(ssl_stream, tcp_stream.unwrap()).unwrap();
         let _ = SslStream::connect(Pin::<_>::new(&mut stream)).await;
         
-        log::debug!("OVERLAY:PEER Connected to server {:?}", addr);
+        log::debug!("NET:Peer Connected to server {:?}", addr);
 
         Ok(Arc::new(Peer {
             node_key,
@@ -94,7 +94,7 @@ impl Peer {
 
     /// Outgoing handshake process.
     pub async fn connect(self: &Arc<Self>) -> Result<(), HandshakeError> {
-        log::debug!("OVERLAY:PEER Starting handshake with: {}", self.peer_addr);
+        log::debug!("NET:Peer Starting handshake with: {}", self.peer_addr);
         self.handshake_send_request().await?;
         self.handshake_read_response().await?;
         Arc::clone(&self).spawn_read_messages();
@@ -173,7 +173,7 @@ impl Peer {
 
             let code = resp.code.unwrap();
 
-            log::debug!("OVERLAY:PEER Handshake response: {}", code);
+            log::debug!("NET:Peer Handshake response: {}", code);
             if code == 101 {
                 // self.peer_user_agent = Some(get_header!("Server").to_string());
                 let _ = get_header("Server")?;
@@ -249,7 +249,7 @@ impl Peer {
 
                 let _verify_signature = self.handshake_verify_signature(sig, public_key.clone(), stream.ssl()).await?;
                 
-                log::debug!("OVERLAY:PEER Peer Public Key: {}", public_key.to_string());
+                log::debug!("NET:Peer Peer Public Key: {}", public_key.to_string());
 
                 buf.advance(status.unwrap());
             } else {
@@ -304,7 +304,7 @@ impl Peer {
         match code {
             101 => {
                 if !buf.is_empty() {
-                    log::error!("Read more data than expected on successful handshake...");
+                    log::error!("NET:Peer Read more data than expected on successful handshake...");
                     return Err(HandshakeError::BadRequest(
                         "Read more data than expected on successful handshake...".to_string(),
                     ));
@@ -404,7 +404,7 @@ impl Peer {
                 ping.no_ping += 1;
                 if ping.no_ping > 10 {
                     // TODO: shutdown
-                    log::warn!("OVERLAY:PEER No ping response for more than 10 seconds, shutdown: {}", self.peer_addr);
+                    log::warn!("NET:Peer No ping response for more than 10 seconds, shutdown: {}", self.peer_addr);
                 }
 
                 if ping.seq.is_none() {
@@ -419,7 +419,7 @@ impl Peer {
 
     /// Send message to peer.
     pub async fn send_message(&self, msg: ProtoMessage) -> Result<(), SendRecvError> {
-        log::debug!("OVERLAY:PEER Send message to peer: {:?}", msg);
+        log::debug!("NET:Peer Send message to peer: {:?}", msg);
         let size = msg.encoded_len();
         let mut bytes = BytesMut::with_capacity(size + 4);
         // Uncompressed value, the top six bits of the first byte are 0.
@@ -427,7 +427,7 @@ impl Peer {
         msg.encode(&mut bytes).map_err(SendRecvError::Encode)?;
 
         let mut stream = self.stream.lock().await;
-        stream.write_all(&bytes).await.map_err(SendRecvError::Io);
+        let _ = stream.write_all(&bytes).await.map_err(SendRecvError::Io);
         stream.flush().await.map_err(SendRecvError::Io)
     }
 
@@ -482,21 +482,21 @@ impl Peer {
 
             loop {
                 
-                log::debug!("OVERLAY:PEER pepico: spawn_read_messages");
+                log::debug!("NET:Peer pepico: spawn_read_messages");
 
                 let msg = match self.read_message(&mut read_buf).await {
                     Ok(msg) => {
-                        log::debug!("OVERLAY:PEER tbd: {:?}", msg);
+                        log::debug!("NET:Peertbd: {:?}", msg);
                         msg
                     },
                     Err(error) => {
-                        log::error!("OVERLAY:PEER Error: Peer spawn_read_messages: {}", error);
+                        log::error!("NET:Peer Error: Peer spawn_read_messages: {}", error);
                         log::debug!("{:?}", hex::encode(&read_buf.chunk()));
                         break;
                     }
                 };
 
-                log::debug!("OVERLAY:PEER pepico MSG: spawn_read_messages");
+                log::debug!("NET:Peer pepico MSG: spawn_read_messages");
 
                 use ProtoMessage::*;
 
@@ -512,7 +512,7 @@ impl Peer {
                     _ => Ok(()),
                 };
                 if let Err(error) = result {
-                    log::error!("Peer message handler error: {}", error);
+                    log::error!("NET:Peer Peer message handler error: {}", error);
                     break;
                 }
             }
@@ -548,24 +548,24 @@ impl Peer {
                 *read_buf = Box::new(BytesMut::with_capacity(size));
             };
 
-            let bytes = read_buf.bytes_mut();
+            // let bytes = read_buf.bytes_mut();
 
-            log::debug!("OVERLAY:PEER {:?}", bytes);
+            // log::debug!("OVERLAY:PEER {:?}", bytes);
 
-            let bytes = unsafe {
-                core::slice::from_raw_parts_mut(
-                    bytes[0].as_mut_ptr(),
-                    std::cmp::min(bytes.len(), msg_size),
-                )
-            };
-            assert!(bytes.len() >= msg_size, "Not enough bytes for read message");
+            // let bytes = unsafe {
+            //     core::slice::from_raw_parts_mut(
+            //         bytes[0].as_mut_ptr(),
+            //         std::cmp::min(bytes.len(), msg_size),
+            //     )
+            // };
+            // assert!(bytes.len() >= msg_size, "Not enough bytes for read message");
 
-            if let Err(error) = stream.read_exact(bytes).await {
-                return Err(SendRecvError::Io(error));
-            }
-            unsafe {
-                read_buf.advance_mut(bytes.len());
-            }
+            // if let Err(error) = stream.read_exact(bytes).await {
+            //     return Err(SendRecvError::Io(error));
+            // }
+            // unsafe {
+            //     read_buf.advance_mut(bytes.len());
+            // }
 
             if proto::Message::is_valid_type(&read_buf) {
                 let msg = proto::Message::decode(&mut read_buf);
@@ -578,7 +578,7 @@ impl Peer {
         self: &Arc<Self>,
         msg: PingPong,
     ) -> Result<(), std::convert::Infallible> {
-        log::debug!("OVERLAY:PEER Received ping message: {:?}", msg);
+        log::debug!("NET:Peer Received ping message: {:?}", msg);
         let msg = PingPong::build_pong(msg.sequence());
         Arc::clone(self).spawn_send_message(ProtoMessage::PingPong(msg));
         Ok(())
