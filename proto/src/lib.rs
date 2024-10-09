@@ -2,17 +2,15 @@
 
 #![feature(cell_leak)]
 
-use std::cell::{Ref, RefCell};
-use std::net::SocketAddr;
+pub mod xrpl;
 
+use std::{cell::{Ref, RefCell}, net::SocketAddr};
+use crate::tm_ping::PingType;
 use bytes::{Buf, BufMut};
 use prost::Message as _;
 pub use prost::{DecodeError, EncodeError};
-
-use xrpl::{tm_endpoints::TmEndpointv2, tm_ping::PingType, *};
-
-// Export `prost` generated enums/structs.
-pub mod xrpl;
+use tm_endpoints::TmEndpointv2;
+use xrpl::*;
 
 /// Encode/Decode trait.
 pub trait EncodeDecode {
@@ -69,44 +67,27 @@ macro_rules! impl_inner_fns {
 /// All possible messages in protocol
 #[derive(Debug)]
 pub enum Message {
-    /// Validators manifests. On protocol start all known manifest sent to connected peer.
-    /// If peer receive new manifest it's can be resent to other peers.
     Manifests(TmManifests),
-    /// Ping/Pong messages. It's not required sent pings, but we always should send pong as reply.
-    /// If pong will not be received during few timer triggers connection will be closed.
-    /// By default, timer interval is 8s, no ping limit is 10, i.e. limit is 80s.
     PingPong(PingPong),
-    /// Cluster related. Ignore.
     Cluster(TmCluster),
-    /// Receive other peers endpoints. Rippled sent such message every ~1s.
     Endpoints(Endpoints),
-    /// Relayed transaction. Need more info.
     Transaction(TmTransaction),
-    /// Request ledger information, can be relayed. Need more info.
     GetLedger(TmGetLedger),
-    /// Response on ledger request. Need more info.
     LedgerData(TmLedgerData),
-    /// Not sure. Need more info.
     ProposeLedger(TmProposeSet),
-    /// Peer status. Connection will be dropped in outgoing peer will not sent status after some time.
     StatusChange(TmStatusChange),
-    /// Transactions set with root hash. Need more info.
     HaveSet(TmHaveTransactionSet),
-    /// Need more info.
     Validation(TmValidation),
-    /// Request/Response of different data.
-    Objects(TmGetObjectByHash),
-    /// Deprecated.
-    GetShardInfo(TmGetShardInfo),
-    /// Deprecated.
-    ShardInfo(TmShardInfo),
-    /// Request information about shards. Ignore.
-    GetPeerShardInfo(TmGetPeerShardInfo),
-    /// Response on request about shards. Ignore.
-    PeerShardInfo(TmPeerShardInfo),
-    /// Validators list. Supported from XRPL/1.2. Sent on startup. Can be relayed on receiving to
-    /// peers who have old validator sequence.
+    GetObject(TmGetObjectByHash),
     Validatorlist(TmValidatorList),
+    Validatorlistcollection(TmValidatorListCollection),
+    ProofPathReq(TmProofPathRequest),
+    ProofPathResponse(TmProofPathResponse),
+    ReplayDeltaReq(TmReplayDeltaRequest),
+    ReplayDeltaResponse(TmReplayDeltaResponse),
+    Transactions(TmTransactions),
+    HaveTransactions(TmHaveTransactions),
+    Squelch(TmSquelch),
 }
 
 impl Message {
@@ -135,12 +116,16 @@ impl EncodeDecode for Message {
             Self::StatusChange(ref v) => v.encoded_len(),
             Self::HaveSet(ref v) => v.encoded_len(),
             Self::Validation(ref v) => v.encoded_len(),
-            Self::Objects(ref v) => v.encoded_len(),
-            Self::GetShardInfo(ref v) => v.encoded_len(),
-            Self::ShardInfo(ref v) => v.encoded_len(),
-            Self::GetPeerShardInfo(ref v) => v.encoded_len(),
-            Self::PeerShardInfo(ref v) => v.encoded_len(),
+            Self::GetObject(ref v) => v.encoded_len(),
             Self::Validatorlist(ref v) => v.encoded_len(),
+            Self::Validatorlistcollection(ref v) => v.encoded_len(),
+            Self::ProofPathReq(ref v) => v.encoded_len(),
+            Self::ProofPathResponse(ref v) => v.encoded_len(),
+            Self::ReplayDeltaReq(ref v) => v.encoded_len(),
+            Self::ReplayDeltaResponse(ref v) => v.encoded_len(),
+            Self::Transactions(ref v) => v.encoded_len(),
+            Self::HaveTransactions(ref v) => v.encoded_len(),
+            Self::Squelch(ref v) => v.encoded_len(),
         }
     }
 
@@ -160,12 +145,17 @@ impl EncodeDecode for Message {
             Self::StatusChange(_) => MtStatusChange,
             Self::HaveSet(_) => MtHaveSet,
             Self::Validation(_) => MtValidation,
-            Self::Objects(_) => MtGetObjects,
-            Self::GetShardInfo(_) => MtGetPeerShardInfo,
-            Self::ShardInfo(_) => MtShardInfo,
-            Self::GetPeerShardInfo(_) => MtGetPeerShardInfo,
-            Self::PeerShardInfo(_) => MtPeerShardInfo,
+            Self::GetObject(_) => MtGetObjects,
             Self::Validatorlist(_) => MtValidatorlist,
+            Self::Validatorlistcollection(_) => MtValidatorlistcollection,
+            Self::ProofPathReq(_) => MtProofPathReq,
+            Self::ProofPathResponse(_) => MtProofPathResponse,
+            Self::ReplayDeltaReq(_) => MtReplayDeltaReq,
+            Self::ReplayDeltaResponse(_) => MtReplayDeltaResponse,
+            Self::Transactions(_) => MtTransactions,
+            Self::HaveTransactions(_) => MtHaveTransactions,
+            Self::Squelch(_) => MtSquelch,
+
         };
         buf.put_u16(message_type as u16);
 
@@ -181,12 +171,18 @@ impl EncodeDecode for Message {
             Self::StatusChange(ref v) => v.encode(buf),
             Self::HaveSet(ref v) => v.encode(buf),
             Self::Validation(ref v) => v.encode(buf),
-            Self::Objects(ref v) => v.encode(buf),
-            Self::GetShardInfo(ref v) => v.encode(buf),
-            Self::ShardInfo(ref v) => v.encode(buf),
-            Self::GetPeerShardInfo(ref v) => v.encode(buf),
-            Self::PeerShardInfo(ref v) => v.encode(buf),
+            Self::GetObject(ref v) => v.encode(buf),
             Self::Validatorlist(ref v) => v.encode(buf),
+            Self::Validatorlistcollection(ref v) => v.encode(buf),
+            Self::ProofPathReq(ref v) => v.encode(buf),
+            Self::ProofPathResponse(ref v) => v.encode(buf),
+            Self::ReplayDeltaReq(ref v) => v.encode(buf),
+            Self::ReplayDeltaResponse(ref v) => v.encode(buf),
+            Self::Transactions(ref v) => v.encode(buf),
+            Self::HaveTransactions(ref v) => v.encode(buf),
+            Self::Squelch(ref v) => v.encode(buf),
+
+
         }
     }
 
@@ -210,12 +206,16 @@ impl EncodeDecode for Message {
             MtStatusChange => Message::StatusChange(TmStatusChange::decode(buf)?),
             MtHaveSet => Message::HaveSet(TmHaveTransactionSet::decode(buf)?),
             MtValidation => Message::Validation(TmValidation::decode(buf)?),
-            MtGetObjects => Message::Objects(TmGetObjectByHash::decode(buf)?),
-            MtGetShardInfo => Message::GetShardInfo(TmGetShardInfo::decode(buf)?),
-            MtShardInfo => Message::ShardInfo(TmShardInfo::decode(buf)?),
-            MtGetPeerShardInfo => Message::GetPeerShardInfo(TmGetPeerShardInfo::decode(buf)?),
-            MtPeerShardInfo => Message::PeerShardInfo(TmPeerShardInfo::decode(buf)?),
             MtValidatorlist => Message::Validatorlist(TmValidatorList::decode(buf)?),
+            MtSquelch => Message::Squelch(TmSquelch::decode(buf)?),
+            MtValidatorlistcollection => Message::Validatorlistcollection(TmValidatorListCollection::decode(buf)?),
+            MtProofPathReq => Message::ProofPathReq(TmProofPathRequest::decode(buf)?),
+            MtProofPathResponse => Message::ProofPathResponse(TmProofPathResponse::decode(buf)?),
+            MtReplayDeltaReq => Message::ReplayDeltaReq(TmReplayDeltaRequest::decode(buf)?),
+            MtReplayDeltaResponse => Message::ReplayDeltaResponse(TmReplayDeltaResponse::decode(buf)?),
+            MtHaveTransactions => Message::HaveTransactions(TmHaveTransactions::decode(buf)?),
+            MtTransactions => Message::Transactions(TmTransactions::decode(buf)?),
+            MtGetObjectByHash => Message::GetObject(TmGetObjectByHash::decode(buf)?),
         })
     }
 }
@@ -282,9 +282,7 @@ impl_encode_decode!(Endpoints, TmEndpoints);
 impl Default for Endpoints {
     fn default() -> Self {
         Self::from_inner(TmEndpoints {
-            // Not used in rippled, but set to 2
             version: 2,
-            endpoints: vec![],
             endpoints_v2: vec![],
         })
     }

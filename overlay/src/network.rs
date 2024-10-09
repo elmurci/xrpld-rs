@@ -4,7 +4,7 @@ use shared::log;
 use shared::structs::config::{IpItem, XrpldConfig};
 use tokio::time::sleep;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use shared::crypto::Secp256k1Keys;
 
@@ -15,7 +15,7 @@ use crate::{peer, Peer, PeerTable};
 pub struct Network {
     // peers: Vec<Peer>,
     node_key: Arc<Secp256k1Keys>,
-    peer_table: Arc<PeerTable>,
+    peer_table: Arc<PeerTable>, // RwLock<PeerTable>
     network_id: NetworkId,
     ips: Vec<IpItem>,
     ssl_verify: bool,
@@ -66,27 +66,27 @@ impl Network {
                 Some(addr) => addr,
                 None => break None,
             };
-            log::debug!("NET:Updt Connecting to peer {}...", addr);
+            log::debug!("Network:Update Connecting to peer {}...", addr);
             match self.connect_to(addr, self.network_id.clone(), self.ssl_verify).await {
                 Ok(peer) => {
-                    log::info!("NET:Updt Connected successfully to peer {}...", addr);
+                    log::info!("Network:Update Connected successfully to peer {}...", addr);
                     break Some(peer)
                 },
                 Err(PeerError::Connect(error)) => {
-                    log::warn!("NET:Updt Failed connect to peer {}: {}", addr, error)
+                    log::warn!("Network:Update Failed connect to peer {}: {}", addr, error)
                 }
                 Err(PeerError::Handshake(error)) => {
-                    log::warn!("NET:Updt Failed handshake with peer {}: {}", addr, error);
+                    log::warn!("Network:Update Failed handshake with peer {}: {}", addr, error);
                 }
                 Err(PeerError::Unavailable(ips)) => {
-                    log::warn!("NET:Updt Peer unavailable, give {} peers", ips.len());
+                    log::warn!("Network:Update Peer unavailable, give {} peers", ips.len());
                     self.peer_table.on_redirect(ips).await;
                 }
             }
         };
         
         if peer.is_none() {
-            log::info!("NET:Updt No peers on peers table to connect");
+            log::info!("Network:Update No peers on peers table to connect");
             // TODO: no successful peers, we should re try to connect to bootstrap nodes
         }
 

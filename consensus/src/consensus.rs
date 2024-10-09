@@ -14,13 +14,13 @@ pub fn should_close_ledger(
     params: bool,
 ) -> bool {
 
-    if ((prevRoundTime < -1s) || (prevRoundTime > 10min) ||
-        (timeSincePrevClose > 10min))
-    {
-        // These are unexpected cases, we just close the ledger
-        log::warn!("CONS:Ledger shouldCloseLedger [anyTransactions: {}, prevProposers: {}, timeSincePrevClose: {}, prevRoundTime: {}]", anyTransactions, prevProposers, timeSincePrevClose, prevRoundTime);
-        return true;
-    }
+    // if ((prevRoundTime < -1s) || (prevRoundTime > 10min) ||
+    //     (timeSincePrevClose > 10min))
+    // {
+    //     // These are unexpected cases, we just close the ledger
+    //     log::warn!("CONS:Ledger shouldCloseLedger [anyTransactions: {}, prevProposers: {}, timeSincePrevClose: {}, prevRoundTime: {}]", anyTransactions, prevProposers, timeSincePrevClose, prevRoundTime);
+    //     return true;
+    // }
     true
 }
     

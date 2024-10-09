@@ -70,7 +70,7 @@ impl PeerTable {
     /// https://github.com/ripple/rippled/blob/1.5.0/src/ripple/overlay/impl/OverlayImpl.cpp#L536-L544
     const fn get_bootstrap_peer_nodes() -> [&'static str; 2] {
         [
-            // Pool of servers operated by Ripple Labs Inc. - https://ripple.com
+            // Pool of servers operated by Ripple
             "r.ripple.com:51235",
             // Pool of servers operated by ISRDC - https://isrdc.in
             "sahyadri.isrdc.in:51235",

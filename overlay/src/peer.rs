@@ -1,21 +1,19 @@
 use std::borrow::Cow;
-use std::io::Read;
 use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
-
 use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
 use shared::crypto::secp256k1::ecdsa::Signature;
 use quick_error::quick_error;
-
+use proto::{EncodeDecode, Message as ProtoMessage, PingPong};
+use proto::Message::{Endpoints, Validation, Validatorlistcollection, Manifests, GetLedger, GetObject, StatusChange};
 use bytes::{Buf, BufMut, BytesMut};
 use shared::crypto::secp256k1::{Message, PublicKey};
 use shared::crypto::sha2::{Digest, Sha512};
 use shared::crypto::Secp256k1Keys;
 use openssl::ssl::{SslRef, SslVerifyMode};
-use proto::{EncodeDecode, Endpoints, Message as ProtoMessage, PingPong};
 use serde::{de, Deserialize, Deserializer, Serialize};
 use shared::enums::network::NetworkId;
 use shared::log;
@@ -42,7 +40,6 @@ pub struct Peer {
     peer_addr: SocketAddr,
     ping_data: Mutex<PeerPing>,
     stream: Mutex<SslStream<tokio::net::TcpStream>>,
-    ssl: Option<&'static SslRef>,
     // TODO: add last message timestamp
 }
 
@@ -67,8 +64,9 @@ impl Peer {
         let tcp_stream = TcpStream::connect(addr).await;
 
         if tcp_stream.is_err() {
+
             let err = tcp_stream.unwrap_err();
-            log::warn!("NET:Peer Could not connect with peer: {}: {}", addr, err);
+            log::warn!("Network:Peer Could not connect with peer: {}: {}", addr, err);
             return Err(ConnectError::Io(err));
         }
         
@@ -76,7 +74,7 @@ impl Peer {
         let mut stream = SslStream::new(ssl_stream, tcp_stream.unwrap()).unwrap();
         let _ = SslStream::connect(Pin::<_>::new(&mut stream)).await;
         
-        log::debug!("NET:Peer Connected to server {:?}", addr);
+        log::debug!("Network:Peer Connected to server {:?}", addr);
 
         Ok(Arc::new(Peer {
             node_key,
@@ -88,17 +86,16 @@ impl Peer {
                 seq: None,
             }),
             stream: Mutex::new(stream),
-            ssl: None,
         }))
     }
 
     /// Outgoing handshake process.
     pub async fn connect(self: &Arc<Self>) -> Result<(), HandshakeError> {
-        log::debug!("NET:Peer Starting handshake with: {}", self.peer_addr);
+        log::debug!("Network:Peer Starting handshake with: {}", self.peer_addr);
         self.handshake_send_request().await?;
         self.handshake_read_response().await?;
         Arc::clone(&self).spawn_read_messages();
-        Arc::clone(&self).spawn_ping_loop();
+        // Arc::clone(&self).spawn_ping_loop();
         Ok(())
     }
 
@@ -159,7 +156,7 @@ impl Peer {
                 continue;
             }
 
-            log::debug!("Handshake response status {:?}", status);
+            log::debug!("Network:Peer Handshake response status {:?}", status);
 
             let find_header = |name| {
                 resp.headers
@@ -173,7 +170,7 @@ impl Peer {
 
             let code = resp.code.unwrap();
 
-            log::debug!("NET:Peer Handshake response: {}", code);
+            log::debug!("Network:Peer Handshake response: {}", code);
             if code == 101 {
                 // self.peer_user_agent = Some(get_header!("Server").to_string());
                 let _ = get_header("Server")?;
@@ -249,7 +246,7 @@ impl Peer {
 
                 let _verify_signature = self.handshake_verify_signature(sig, public_key.clone(), stream.ssl()).await?;
                 
-                log::debug!("NET:Peer Peer Public Key: {}", public_key.to_string());
+                log::debug!("Network:Peer Peer Public Key: {}", public_key.to_string());
 
                 buf.advance(status.unwrap());
             } else {
@@ -304,7 +301,7 @@ impl Peer {
         match code {
             101 => {
                 if !buf.is_empty() {
-                    log::error!("NET:Peer Read more data than expected on successful handshake...");
+                    log::error!("Network:Peer Read more data than expected on successful handshake...");
                     return Err(HandshakeError::BadRequest(
                         "Read more data than expected on successful handshake...".to_string(),
                     ));
@@ -392,7 +389,7 @@ impl Peer {
         }
     }
 
-    /// Send ping message in loop for checking that peer is alive.
+    // Send ping message in loop for checking that peer is alive.
     fn spawn_ping_loop(self: Arc<Peer>) {
         let _join_handle = tokio::spawn(async move {
             let interval = std::time::Duration::from_secs(8);
@@ -404,7 +401,7 @@ impl Peer {
                 ping.no_ping += 1;
                 if ping.no_ping > 10 {
                     // TODO: shutdown
-                    log::warn!("NET:Peer No ping response for more than 10 seconds, shutdown: {}", self.peer_addr);
+                    log::warn!("Network:Peer No ping response for more than 10 seconds, shutdown: {}", self.peer_addr);
                 }
 
                 if ping.seq.is_none() {
@@ -417,9 +414,9 @@ impl Peer {
         });
     }
 
-    /// Send message to peer.
+    ///  Send message to peer.
     pub async fn send_message(&self, msg: ProtoMessage) -> Result<(), SendRecvError> {
-        log::debug!("NET:Peer Send message to peer: {:?}", msg);
+        log::debug!("Network:Peer Send message to peer: {:?}", msg);
         let size = msg.encoded_len();
         let mut bytes = BytesMut::with_capacity(size + 4);
         // Uncompressed value, the top six bits of the first byte are 0.
@@ -441,7 +438,7 @@ impl Peer {
         });
     }
 
-    /// Read message from peer.
+    // Read message from peer.
     fn spawn_read_messages(self: Arc<Peer>) {
         let _join_handle = tokio::spawn(async move {
             // bytes::BytesMut not shrink back in any case
@@ -450,17 +447,6 @@ impl Peer {
             // As result `unsafe` and `unwrap`... but we have one buffer which used for most of messages.
             // When buffer not enough we allocate new.
             let mut read_buf = Box::new(BytesMut::new());
-
-            // GetPeerShardInfo: 1
-            // Endpoints: 16
-            // HaveSet: 316
-            // Manifests: 1
-            // Transaction: 1021
-            // Ping: 1
-            // StatusChange: 44
-            // ProposeLedger: 5233
-            // Validatorlist: 1
-            // Validation: 814
 
             // mtMANIFESTS             = 2;
             // mtPING                  = 3;
@@ -481,38 +467,64 @@ impl Peer {
             // mtVALIDATORLIST         = 54;
 
             loop {
-                
-                log::debug!("NET:Peer pepico: spawn_read_messages");
-
-                let msg = match self.read_message(&mut read_buf).await {
+            
+                let msg: ProtoMessage = match self.read_message().await {
                     Ok(msg) => {
-                        log::debug!("NET:Peertbd: {:?}", msg);
                         msg
                     },
                     Err(error) => {
-                        log::error!("NET:Peer Error: Peer spawn_read_messages: {}", error);
-                        log::debug!("{:?}", hex::encode(&read_buf.chunk()));
+                        log::error!("Network:Peer Error: Peer spawn_read_messages: {}", error);
+                        // log::debug!("{:?}", hex::encode(&read_buf.chunk()));
                         break;
                     }
                 };
 
-                log::debug!("NET:Peer pepico MSG: spawn_read_messages");
-
-                use ProtoMessage::*;
-
                 let result = match msg {
-                    PingPong(msg) => {
+                    proto::Message::PingPong(msg) => {
                         if msg.is_ping() {
                             self.on_message_ping(msg).await
                         } else {
                             self.on_message_pong(msg).await
                         }
                     }
+                    Manifests(msg) => {
+                        log::info!("Network:Peer Manifests message received. {}", msg.list.len());
+                        // TODO
+                        Ok(())
+                    }
+                    GetLedger(msg) => {
+                        log::info!("Network:Peer GetLedger message received. {:?}", hex::encode(msg.ledger_hash.unwrap()).to_uppercase());
+                        // TODO
+                        Ok(())
+                    }
+                    StatusChange(msg) => {
+                        log::info!("Network:Peer Status Change message received {:?}", msg.ledger_seq.unwrap());
+                        // TODO
+                        Ok(())
+                    }
+                    Validatorlistcollection(msg) => {
+                        log::info!("Network:Peer Validation List Collection message received.");
+                        // TODO
+                        Ok(())
+                    }
+                    GetObject(msg) => {
+                        log::info!("Network:Peer Get Object by hash message received. {:?}", hex::encode(msg.ledger_hash.unwrap()).to_uppercase());
+                        // TODO
+                        Ok(())
+                    }
+                    Validation(msg) => {
+                        log::info!("Network:Peer Validation message received. {:?}", hex::encode(msg.validation).to_uppercase());
+                        // TODO
+                        Ok(())
+                    }
                     Endpoints(msg) => self.on_message_endpoints(msg).await,
-                    _ => Ok(()),
+                    _ => {
+                        log::error!("Network:Peer Unhandled type. {:?}", msg);
+                        Ok(())
+                    },
                 };
                 if let Err(error) = result {
-                    log::error!("NET:Peer Peer message handler error: {}", error);
+                    log::error!("Network:Peer Peer message handler error: {}", error);
                     break;
                 }
             }
@@ -521,9 +533,43 @@ impl Peer {
 
     async fn read_message(
         self: &Arc<Self>,
-        mut read_buf: &mut Box<BytesMut>,
-    ) -> Result<ProtoMessage, SendRecvError> {
+    ) -> Result<proto::Message, SendRecvError> {
+
         loop {
+            
+            // Message Header
+            // --------------
+            //
+            // The header is a variable-sized structure that contains information about
+            // the type of the message and the length and encoding of the payload.
+        
+            // The first bit determines whether a message is compressed or uncompressed;
+            // for compressed messages, the next three bits identify the compression
+            // algorithm.
+        
+            // All multi-byte values are represented in big endian.
+        
+            // For uncompressed messages (6 bytes), numbering bits from left to right:
+        
+            //     - The first 6 bits are set to 0.
+            //     - The next 26 bits represent the payload size.
+            //     - The remaining 16 bits represent the message type.
+        
+            // For compressed messages (10 bytes), numbering bits from left to right:
+        
+            //     - The first 32 bits, together, represent the compression algorithm
+            //       and payload size:
+            //         - The first bit is set to 1 to indicate the message is compressed.
+            //         - The next 3 bits indicate the compression algorithm.
+            //         - The next 2 bits are reserved at this time and set to 0.
+            //         - The remaining 26 bits represent the payload size.
+            //     - The next 16 bits represent the message type.
+            //     - The remaining 32 bits are the uncompressed message size.
+        
+            // The maximum size of a message at this time is 64 MB. Messages larger than
+            // this will be dropped and the recipient may, at its option, sever the link.
+
+            // 
             let mut payload_size_buf = [0u8; 4];
             let mut stream = self.stream.lock().await;
 
@@ -531,54 +577,52 @@ impl Peer {
                 return Err(SendRecvError::Io(error));
             }
 
-            if payload_size_buf[0] & 0xFC != 0 {
+            const VERSION_MASK: u8 = 0xFC;
+
+            // For uncompressed messages the first 6 bits of the first byte are should be set to 0
+            // TODO: Handle compressed messages
+            if payload_size_buf[0] & VERSION_MASK != 0 {
+                // Handle unknown version header
                 let error = SendRecvError::UnknowVersionHeader(payload_size_buf[0]);
                 return Err(error);
             }
 
             let payload_size = u32::from_be_bytes(payload_size_buf) as usize;
+
+            // Limit is 64 MB
             if payload_size > 64 * 1024 * 1024 {
                 let error = SendRecvError::PayloadTooBig(payload_size);
                 return Err(error);
             }
 
+            // Calculate the total message size (payload + header)
             let msg_size = payload_size + 2;
-            if msg_size > read_buf.capacity() {
-                let size = std::cmp::max(msg_size, 128 * 1024);
-                *read_buf = Box::new(BytesMut::with_capacity(size));
-            };
+   
+            // Log the received payload size and message type
+            let message_type = ((payload_size_buf[0] as u16) << 8) + (payload_size_buf[1] as u16);
 
-            // let bytes = read_buf.bytes_mut();
+            // Allocate a buffer large enough to hold the entire message
+            let mut buffer = vec![0u8; msg_size];
 
-            // log::debug!("OVERLAY:PEER {:?}", bytes);
-
-            // let bytes = unsafe {
-            //     core::slice::from_raw_parts_mut(
-            //         bytes[0].as_mut_ptr(),
-            //         std::cmp::min(bytes.len(), msg_size),
-            //     )
-            // };
-            // assert!(bytes.len() >= msg_size, "Not enough bytes for read message");
-
-            // if let Err(error) = stream.read_exact(bytes).await {
-            //     return Err(SendRecvError::Io(error));
-            // }
-            // unsafe {
-            //     read_buf.advance_mut(bytes.len());
-            // }
-
-            if proto::Message::is_valid_type(&read_buf) {
-                let msg = proto::Message::decode(&mut read_buf);
-                return Ok(msg.map_err(SendRecvError::Decode)?);
+            // Read the message from the stream into the buffer
+            if let Err(error) = stream.read_exact(&mut buffer).await {
+                return Err(SendRecvError::Io(error));
             }
+
+            if ProtoMessage::is_valid_type(&buffer.as_slice()) {
+                let msg = proto::Message::decode(&mut buffer.as_slice());
+                return Ok(msg.map_err(SendRecvError::Decode)?);
+            }    
+  
         }
+
     }
 
     async fn on_message_ping(
         self: &Arc<Self>,
         msg: PingPong,
     ) -> Result<(), std::convert::Infallible> {
-        log::debug!("NET:Peer Received ping message: {:?}", msg);
+        log::debug!("Network:Peer Received ping message: {:?}", msg);
         let msg = PingPong::build_pong(msg.sequence());
         Arc::clone(self).spawn_send_message(ProtoMessage::PingPong(msg));
         Ok(())
@@ -599,7 +643,7 @@ impl Peer {
 
     async fn on_message_endpoints(
         self: &Arc<Self>,
-        msg: Endpoints,
+        msg: proto::Endpoints,
     ) -> Result<(), std::convert::Infallible> {
         let mut endpoints = msg.endpoints;
         for ep in endpoints.iter_mut().filter(|ep| ep.hops == 0) {
