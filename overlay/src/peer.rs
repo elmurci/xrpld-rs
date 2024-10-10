@@ -2,9 +2,10 @@ use std::borrow::Cow;
 use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
 use std::str::FromStr;
+use base64::Engine;
+use shared::structs::manifest::{ValidatorBlob, ValidatorBlobInfo};
 use std::sync::Arc;
 use base64::prelude::BASE64_STANDARD;
-use base64::Engine;
 use shared::crypto::secp256k1::ecdsa::Signature;
 use quick_error::quick_error;
 use proto::{EncodeDecode, Message as ProtoMessage, PingPong};
@@ -493,7 +494,8 @@ impl Peer {
                         Ok(())
                     }
                     GetLedger(msg) => {
-                        log::info!("Network:Peer GetLedger message received. {:?}", hex::encode(msg.ledger_hash.unwrap()).to_uppercase());
+                        log::info!("Network:Peer GetLedger message received for {:?} - {:?}", hex::encode(&msg.ledger_hash.unwrap()).to_uppercase(), &msg.ledger_seq.unwrap());
+
                         // TODO
                         Ok(())
                     }
@@ -503,12 +505,20 @@ impl Peer {
                         Ok(())
                     }
                     Validatorlistcollection(msg) => {
-                        log::info!("Network:Peer Validation List Collection message received.");
+                        for blob in &msg.blobs {
+                            // First, validate the signature
+                            // Check expiration
+                            // process validators
+                            let validators = serde_json::from_slice::<ValidatorBlob>(&BASE64_STANDARD.decode(&blob.blob).unwrap()).unwrap();
+                            for validator in &validators.validators {
+                                log::info!("Network:Peer Validator List Collection message received - Validator: {:?}", validator.validation_public_key);
+                            }
+                        }
                         // TODO
                         Ok(())
                     }
                     GetObject(msg) => {
-                        log::info!("Network:Peer Get Object by hash message received. {:?}", hex::encode(msg.ledger_hash.unwrap()).to_uppercase());
+                        log::info!("Network:Peer Get Object by hash message received. {:?} ({:?})", msg.r#type(), hex::encode(msg.ledger_hash.unwrap()).to_uppercase());
                         // TODO
                         Ok(())
                     }
