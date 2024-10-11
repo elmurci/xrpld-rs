@@ -1,12 +1,11 @@
-use quick_error::quick_error;
 use shared::enums::network::NetworkId;
+use shared::errors::network::{HandshakeError, PeerError};
 use shared::log;
 use shared::structs::config::{IpItem, XrpldConfig};
+use shared::structs::secp256k1_keys::Secp256k1Keys;
 use tokio::time::sleep;
 use std::net::SocketAddr;
-use std::sync::{Arc, RwLock};
-
-use shared::crypto::Secp256k1Keys;
+use std::sync::Arc;
 
 use crate::{peer, Peer, PeerTable};
 
@@ -53,7 +52,7 @@ impl Network {
         ).await;
         
         loop {
-            let _ = self.update().await;
+            let _ = self.update().await?;
             sleep(Duration::from_millis(2000)).await;
         }
 
@@ -107,26 +106,10 @@ impl Network {
         {
             Ok(peer) => match peer.connect().await {
                 Ok(_) => Ok(peer),
-                Err(peer::HandshakeError::Unavailable(ips)) => Err(PeerError::Unavailable(ips)),
+                Err(HandshakeError::Unavailable(ips)) => Err(PeerError::Unavailable(ips)),
                 Err(error) => Err(PeerError::Handshake(error)),
             },
-            Err(error) => Err(PeerError::Connect(error)),
-        }
-    }
-}
-
-quick_error! {
-    /// Possible peer errors.
-    #[derive(Debug)]
-    pub enum PeerError {
-        Connect(error: peer::ConnectError) {
-            display("{}", error)
-        }
-        Handshake(error: peer::HandshakeError) {
-            display("{}", error)
-        }
-        Unavailable(ips: Vec<SocketAddr>) {
-            display("Unavailable, give peers: {:?}", ips)
+            Err(error) => Err(PeerError::Connect(error.to_string())),
         }
     }
 }

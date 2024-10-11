@@ -17,3 +17,9 @@ pub struct XrpldConfig {
     pub ip: String,
     pub port: String,
 }
+
+impl IpItem {
+    pub fn to_socket(&self) -> String {
+        format!("{}:{}", self.ip, self.port)
+    }
+}

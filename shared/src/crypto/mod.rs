@@ -4,10 +4,6 @@
 pub use secp256k1;
 pub use sha2;
 
-// re-export own
-pub use secp256k1_keys::Secp256k1Keys;
-
-mod secp256k1_keys;
 pub mod base58_xrpl;
 
 // static secp256k1 context

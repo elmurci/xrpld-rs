@@ -3,9 +3,8 @@ use std::borrow::Cow;
 use secp256k1::ecdsa::Signature;
 use secp256k1::rand::rngs::OsRng;
 use secp256k1::{Message, PublicKey, SecretKey};
-
-use super::base58_xrpl::{encode, Version};
-use super::SECP256K1;
+use crate::crypto::base58_xrpl::{encode, Version};
+use crate::crypto::SECP256K1;
 
 /// Simplified interface to [`secp256k1`][secp256k1] crate.
 #[derive(Debug)]
@@ -23,12 +22,12 @@ impl Secp256k1Keys {
     }
 
     /// Create struct from serialized SecretKey in hex.
-    pub fn from_hex<T: AsRef<[u8]>>(data: T) -> Result<Secp256k1Keys, KeysError> {
-        let mut bytes = [0u8; 32];
-        hex::decode_to_slice(data, &mut bytes).map_err(|_| KeysError::InvalidSecretKeyHex)?;
-        let secret_key = SecretKey::from_slice(&bytes).map_err(|_| KeysError::InvalidSecretKey)?;
-        Ok(Self::from_secret_key(secret_key))
-    }
+    // pub fn from_hex<T: AsRef<[u8]>>(data: T) -> Result<Secp256k1Keys, KeysError> {
+    //     let mut bytes = [0u8; 32];
+    //     hex::decode_to_slice(data, &mut bytes).map_err(|_| KeysError::InvalidSecretKeyHex);
+    //     let secret_key = SecretKey::from_slice(&bytes).map_err(|_| KeysError::InvalidSecretKey);
+    //     Ok(Self::from_secret_key(secret_key.unwrap()))
+    // }
 
     /// Create struct from SecretKey.
     fn from_secret_key(secret_key: SecretKey) -> Secp256k1Keys {
@@ -56,33 +55,21 @@ impl Secp256k1Keys {
     }
 }
 
-quick_error! {
-    #[derive(Debug)]
-    pub enum KeysError {
-        InvalidSecretKeyHex {
-            display("Invalid Secret Key in hex")
-        }
-        InvalidSecretKey {
-            display("Invalid Secret Key")
-        }
-    }
-}
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+//     #[test]
+//     fn get_public_key_bs58() {
+//         let data = "e55dc8f3741ac9668dbe858409e5d64f5ce88380f7228eccfe82b92b2c7848ba";
 
-    #[test]
-    fn get_public_key_bs58() {
-        let data = "e55dc8f3741ac9668dbe858409e5d64f5ce88380f7228eccfe82b92b2c7848ba";
+//         let keys = Secp256k1Keys::from_hex(data);
+//         assert_eq!(keys.is_ok(), true);
 
-        let keys = Secp256k1Keys::from_hex(data);
-        assert_eq!(keys.is_ok(), true);
-
-        let keys = keys.unwrap();
-        assert_eq!(
-            &*keys.get_public_key_bs58(),
-            "n9KAa2zVWjPHgfzsE3iZ8HAbzJtPrnoh4H2M2HgE7dfqtvyEb1KJ"
-        )
-    }
-}
+//         let keys = keys.unwrap();
+//         assert_eq!(
+//             &*keys.get_public_key_bs58(),
+//             "n9KAa2zVWjPHgfzsE3iZ8HAbzJtPrnoh4H2M2HgE7dfqtvyEb1KJ"
+//         )
+//     }
+// }

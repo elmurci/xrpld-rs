@@ -3,17 +3,17 @@ use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
 use std::str::FromStr;
 use base64::Engine;
-use shared::structs::manifest::{ValidatorBlob, ValidatorBlobInfo};
+use shared::errors::network::{ConnectError, HandshakeError, SendRecvError};
+use shared::structs::msg_validations::ValidatorBlob;
+use shared::structs::secp256k1_keys::Secp256k1Keys;
 use std::sync::Arc;
 use base64::prelude::BASE64_STANDARD;
 use shared::crypto::secp256k1::ecdsa::Signature;
-use quick_error::quick_error;
 use proto::{EncodeDecode, Message as ProtoMessage, PingPong};
 use proto::Message::{Endpoints, Validation, Validatorlistcollection, Manifests, GetLedger, GetObject, StatusChange};
 use bytes::{Buf, BufMut, BytesMut};
 use shared::crypto::secp256k1::{Message, PublicKey};
 use shared::crypto::sha2::{Digest, Sha512};
-use shared::crypto::Secp256k1Keys;
 use openssl::ssl::{SslRef, SslVerifyMode};
 use serde::{de, Deserialize, Deserializer, Serialize};
 use shared::enums::network::NetworkId;
@@ -167,7 +167,7 @@ impl Peer {
             };
 
             let get_header =
-                |name| find_header(name).ok_or_else(|| HandshakeError::MissingHeader(name));
+                |name| find_header(name).ok_or_else(|| HandshakeError::MissingHeader(name.to_string()));
 
             let code = resp.code.unwrap();
 
@@ -178,19 +178,19 @@ impl Peer {
 
                 if get_header("Connection")? != "Upgrade" {
                     let reason = r#"expect "Upgrade""#.to_owned();
-                    return Err(HandshakeError::InvalidHeader("Connection", reason));
+                    return Err(HandshakeError::InvalidHeader("Connection".to_string(), reason));
                 }
 
                 let upgrade_header = get_header("Upgrade")?;
 
                 if upgrade_header != "XRPL/2.1" && upgrade_header != "XRPL/2.2" {
                     let reason = r#"Only "XRPL/2.1" or "XRPL/2.2" supported"#.to_owned();
-                    return Err(HandshakeError::InvalidHeader("Upgrade", reason));
+                    return Err(HandshakeError::InvalidHeader("Upgrade".to_string(), reason));
                 }
 
                 if !get_header("Connect-As")?.eq_ignore_ascii_case("peer") {
                     let reason = r#"Only "Peer" supported right now"#.to_owned();
-                    return Err(HandshakeError::InvalidHeader("Connect-As", reason));
+                    return Err(HandshakeError::InvalidHeader("Connect-As".to_string(), reason));
                 }
 
                 if let Some(value) = find_header("Remote-IP") {
@@ -253,7 +253,7 @@ impl Peer {
             } else {
                 let body_size = match find_header("Content-Length") {
                     Some(header) => Some(header.parse::<usize>().map_err(|error| {
-                        HandshakeError::InvalidHeader("Content-Length", error.to_string())
+                        HandshakeError::InvalidHeader("Content-Length".to_string(), error.to_string())
                     })?),
                     None => None,
                 };
@@ -352,7 +352,7 @@ impl Peer {
             .collect::<Vec<u8>>();
         let hash = Sha512::digest(&mix[..]);
 
-        let pac = Message::from_digest_slice(&hash[0..32]).map_err(|_| HandshakeError::InvalidMessage);
+        let pac = Message::from_digest_slice(&hash[0..32]).map_err(|_| HandshakeError::InvalidMessage());
 
         pac
     }
@@ -386,7 +386,7 @@ impl Peer {
 
         match shared::crypto::SECP256K1.verify_ecdsa(&msg, &sig, &pk) {
             Ok(_) => Ok(pk),
-            Err(_) => Err(HandshakeError::SignatureVerificationFailed),
+            Err(_) => Err(HandshakeError::SignatureVerificationFailed()),
         }
     }
 
@@ -489,7 +489,10 @@ impl Peer {
                         }
                     }
                     Manifests(msg) => {
-                        log::info!("Network:Peer Manifests message received. {}", msg.list.len());
+                        log::info!("Network:Peer Peer Manifest message received. {}", msg.list.len());
+                        for item in &msg.list {
+                            log::info!("Network:Peer Peer Manifest: {:?}", item);
+                        }
                         // TODO
                         Ok(())
                     }
@@ -661,96 +664,6 @@ impl Peer {
         }
         self.peer_table.on_endpoints(endpoints).await;
         Ok(())
-    }
-}
-
-quick_error! {
-    /// Possible errors on connecting to peer.
-    #[derive(Debug)]
-    pub enum ConnectError {
-        Io(error: io::Error) {
-            display("{}", error)
-        }
-        Tls(error: native_tls::Error) {
-            display("{}", error)
-        }
-    }
-}
-
-quick_error! {
-    /// Possible errors during handshake process.
-    #[derive(Debug)]
-    pub enum HandshakeError {
-        Io(error: io::Error) {
-            display("{}", error)
-        }
-        MissingHeader(name: &'static str) {
-            display(r#"Header "{}" required"#, name)
-        }
-        InvalidHeader(name: &'static str, reason: String) {
-            display(r#"Invalid header "{}": {}"#, name, reason)
-        }
-        InvalidNetworkId(reason: String) {
-            display("Invalid network id: {}", reason)
-        }
-        InvalidNetworkTime(reason: String) {
-            display("Invalid network time: {}", reason)
-        }
-        InvalidRemoteIp(reason: String) {
-            display("Invalid remote ip: {}", reason)
-        }
-        InvalidLocalIp(reason: String) {
-            display("Invalid local ip: {}", reason)
-        }
-        InvalidMessage {
-            display("Invalid message generated")
-        }
-        InvalidPublicKey(public_key: String) {
-            display(r#"Invalid Public Key: "{}""#, public_key)
-        }
-        InvalidSignature(sig: String) {
-            display(r#"Invalid Signature: "{}""#, sig)
-        }
-        SignatureVerificationFailed {
-            display("Signature verification failed")
-        }
-        InvalidChunkedBody(body: BytesMut) {
-            display("Invalid chunked body: {}", hex::encode(body))
-        }
-        BadRequest(reason: String) {
-            display("Bad request: {}", reason)
-        }
-        Unavailable(ips: Vec<SocketAddr>) {
-            display("Unavailable, give peers: {:?}", ips)
-        }
-        UnavailableBadBody(body: String) {
-            display("Unavailable, can't parse body: {}", body)
-        }
-        UnexpectedHttpStatus(status: u16, body: String) {
-            display("Unexpected HTTP status: {}, body: {}", status, body)
-        }
-    }
-}
-
-quick_error! {
-    /// Possible errors on read/write.
-    #[derive(Debug)]
-    pub enum SendRecvError {
-        Io(error: io::Error) {
-            display("{}", error)
-        }
-        UnknowVersionHeader(version: u8) {
-            display("Unknow version header: {}", version)
-        }
-        PayloadTooBig(size: usize) {
-            display("Message payload too big: {}", size)
-        }
-        Encode(error: proto::EncodeError) {
-            display("Message encode error: {}", error)
-        }
-        Decode(error: proto::DecodeError) {
-            display("Message decode error: {}", error)
-        }
     }
 }
 

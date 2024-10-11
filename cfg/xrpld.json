@@ -6,8 +6,8 @@
             "port": "51235"
         },
         {
-            "ip": "127.0.0.1",
-            "port": "5152"
+            "ip": "s.altnet.rippletest.net",
+            "port": "51235"
         }
     ],
     "ssl_verify": false
