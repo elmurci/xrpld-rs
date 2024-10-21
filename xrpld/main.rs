@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use config::Config;
 use lazy_static::lazy_static;
 use overlay::Network;
-use shared::{log, structs::{config::XrpldConfig, field_id::TypeCode, field_info::field_info_lookup}, xrpl::deserializer::Deserializer};
+use shared::{log, structs::{config::XrpldConfig, field_info::field_info_lookup}, xrpl::deserializer::Deserializer};
 use tokio::sync::RwLock;
 use std::{fmt::Write, num::ParseIntError};
 

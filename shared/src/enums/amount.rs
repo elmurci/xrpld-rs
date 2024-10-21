@@ -1,11 +1,7 @@
-// use crate::alloc::{format, string::ToString};
-// use crate::{AccountId, CurrencyCode, Error};
-use core::fmt::Debug;
+use crate::errors::binary_codec::BinaryCodecError;
+use crate::errors::binary_codec::BinaryCodecError::{InvalidData, OutOfRange};
+use super::{currency_code::CurrencyCode, primitive::AccountId};
 
-use xrpl_types::{AccountId, CurrencyCode, Error};
-
-/// Amount of XRP or issued token. See <https://xrpl.org/currency-formats.html#specifying-currency-amounts>
-/// and <https://xrpl.org/serialization.html#amount-fields>
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
 pub enum Amount {
     Issued(IssuedAmount),
@@ -13,7 +9,7 @@ pub enum Amount {
 }
 
 impl Amount {
-    pub fn drops(drops: u64) -> Result<Self, Error> {
+    pub fn drops(drops: u64) -> Result<Self, BinaryCodecError> {
         Ok(Self::Drops(DropsAmount::from_drops(drops)?))
     }
 
@@ -21,7 +17,7 @@ impl Amount {
         value: IssuedValue,
         currency: CurrencyCode,
         issuer: AccountId,
-    ) -> Result<Self, Error> {
+    ) -> Result<Self, BinaryCodecError> {
         Ok(Self::Issued(IssuedAmount::from_issued_value(
             value, currency, issuer,
         )?))
@@ -43,9 +39,9 @@ impl Amount {
 pub struct DropsAmount(pub u64);
 
 impl DropsAmount {
-    pub fn from_drops(drops: u64) -> Result<Self, Error> {
+    pub fn from_drops(drops: u64) -> Result<Self, BinaryCodecError> {
         if drops & (0b11 << 62) != 0 {
-            return Err(Error::OutOfRange(
+            return Err(OutOfRange(
                 "Drop amounts cannot use the two must significant bits".to_string(),
             ));
         }
@@ -73,9 +69,9 @@ impl IssuedAmount {
         value: IssuedValue,
         currency: CurrencyCode,
         issuer: AccountId,
-    ) -> Result<Self, Error> {
+    ) -> Result<Self, BinaryCodecError> {
         if currency.is_xrp() {
-            return Err(Error::InvalidData(
+            return Err(InvalidData(
                 "Issued amount cannot have XRP currency code".to_string(),
             ));
         }
@@ -114,7 +110,7 @@ impl IssuedValue {
     /// Creates value from given mantissa and exponent. The created value will be normalized
     /// according to <https://xrpl.org/serialization.html#token-amount-format>. If the value
     /// cannot be represented, an error is returned.
-    pub fn from_mantissa_exponent(mantissa: i64, exponent: i8) -> Result<Self, Error> {
+    pub fn from_mantissa_exponent(mantissa: i64, exponent: i8) -> Result<Self, BinaryCodecError> {
         Self { mantissa, exponent }.normalize()
     }
 
@@ -137,7 +133,7 @@ impl IssuedValue {
     }
 
     /// Normalizes value into the ranges specified at <https://xrpl.org/serialization.html#token-amount-format>
-    fn normalize(self) -> Result<Self, Error> {
+    fn normalize(self) -> Result<Self, BinaryCodecError> {
         // rippled implementation: https://github.com/seelabs/rippled/blob/cecc0ad75849a1d50cc573188ad301ca65519a5b/src/ripple/protocol/impl/IOUAmount.cpp#L38
 
         const MANTISSA_MIN: i64 = 1000000000000000;
@@ -153,7 +149,7 @@ impl IssuedValue {
             1.. => (self.mantissa, false),
             ..=-1 => (
                 self.mantissa.checked_neg().ok_or_else(|| {
-                    Error::OutOfRange("Specified mantissa cannot be i64::MIN".to_string())
+                    OutOfRange("Specified mantissa cannot be i64::MIN".to_string())
                 })?,
                 true,
             ),
@@ -170,7 +166,7 @@ impl IssuedValue {
         }
 
         if mantissa > MANTISSA_MAX || exponent > EXPONENT_MAX {
-            return Err(Error::OutOfRange(format!(
+            return Err(OutOfRange(format!(
                 "Issued value too big to be normalized: {:?}",
                 self
             )));

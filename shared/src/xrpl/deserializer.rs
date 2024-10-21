@@ -1,11 +1,8 @@
 use serde::Deserialize;
-use xrpl_types::{
-    AccountId, Blob, CurrencyCode, Hash128, Hash160, Hash256, StandardCurrencyCode, UInt16, UInt32, UInt8, Uint64
-};
 use bytes::{Buf, Bytes};
 use core::str;
 use std::collections::HashMap;
-use crate::structs::{amount::{Amount, DropsAmount, IssuedAmount, IssuedValue}, field_id::{FieldId, TypeCode}, field_info::FieldInfo};
+use crate::{enums::{self, amount::{Amount, DropsAmount, IssuedAmount, IssuedValue}, currency_code::{CurrencyCode, StandardCurrencyCode}, field_code::TypeCode, primitive::{AccountId, Blob, Hash128, Hash160, UInt16, UInt32, UInt8, Uint64, XrplType}}, structs::{ field_id::FieldId, field_info::FieldInfo}};
 use crate::utils::string::to_3_ascii_chars;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -130,29 +127,31 @@ impl Deserializer {
             .ok_or(BinaryCodecError::FieldNotFound(format!("Field {} not found", ordinal)))
     }
 
-    pub fn read_field_value(&mut self, info: &FieldInfo) -> Result<TypeCode, BinaryCodecError> {
+    pub fn read_field_value(&mut self, info: &FieldInfo) -> Result<XrplType, BinaryCodecError> {
         let size_hint: Option<usize> = if info.is_vl_encoded {
             Some(self.read_variable_length()?)
         } else {
             None
         };
-
-        let bytes: = match info.field_type {
+        
+        let bytes: XrplType = match info.field_type {
             TypeCode::Hash256 => self.deserialize_hash256()?,
             TypeCode::AccountId => self.deserialize_account_id()?,
             TypeCode::Blob => {
                 let hint =
                     size_hint.ok_or(BinaryCodecError::FieldNotFound("missing hint".into()))?;
-                self.deserialize_blob(hint)?.0.to_vec()
+                self.deserialize_blob(hint)?
             }
             // TypeCode::Object => self.deserialize_object()?,
-            TypeCode::Array => self.deserialize_array()?,
+            // TypeCode::Array => self.deserialize_array()?,
+            TypeCode::Hash128 => self.deserialize_hash128()?,
+            TypeCode::Hash160 => self.deserialize_hash160()?,
             TypeCode::Amount => self.deserialize_amount()?,
-            TypeCode::UInt8 => self.deserialize_uint8()?.to_be_bytes().to_vec(),
-            TypeCode::UInt16 => self.deserialize_uint16()?.to_be_bytes().to_vec(),
-            TypeCode::UInt32 => self.deserialize_uint32()?.to_be_bytes().to_vec(),
-            TypeCode::UInt64 => self.deserialize_uint64()?.to_be_bytes().to_vec(),
-            _ => vec![], // TODO: default other types to Blob for now
+            TypeCode::UInt8 => self.deserialize_uint8()?,
+            TypeCode::UInt16 => self.deserialize_uint16()?,
+            TypeCode::UInt32 => self.deserialize_uint32()?,
+            TypeCode::UInt64 => self.deserialize_uint64()?,
+            _ => self.deserialize_uint64()?, // TODO: default other types to Blob for now
         };
         Ok(bytes)
     }
@@ -161,6 +160,54 @@ impl Deserializer {
         self.bytes.remaining() == 0
     }
 
+//     #[cfg(feature = "json")]
+//     pub fn to_json(
+//         &mut self,
+//         type_code: &TypeCode,
+//         data: &[u8],
+//     ) -> Result<Value, BinaryCodecError> {
+//         match type_code {
+//             TypeCode::Hash256 => Ok(Value::String(hex::encode_upper(data))),
+//             TypeCode::AccountId => {
+//                 let account_bytes: [u8; 20] =
+//                     data.try_into().map_err(|_| BinaryCodecError::Overflow)?;
+//                 Ok(Value::String(AccountId(account_bytes).to_address()))
+//             }
+//             TypeCode::Blob => Ok(Value::String(hex::encode_upper(data))),
+//             TypeCode::Object => {
+//                 let mut accumulator: HashMap<String, Value> = HashMap::new();
+//                 self.bytes = Bytes::from(data.to_vec());
+//                 while self.bytes.remaining() > 0 {
+//                     let field: FieldInstance = self.read_field()?;
+//                     if field.name == constants::OBJECT_END_MARKER_NAME {
+//                         break;
+//                     }
+//                     let data_read = self.read_field_value(&field.info)?;
+//                     let json_value = self.to_json(&field.info.field_type, &data_read)?;
+//                     accumulator.insert(field.name, json_value);
+//                 }
+//                 Ok(Value::Object(accumulator.into_iter().collect()))
+//             }
+//             TypeCode::Array => {
+//                 let mut result = Vec::new();
+//                 self.bytes = Bytes::from(data.to_vec());
+//                 while self.bytes.remaining() > 0 {
+//                     let field = self.read_field()?;
+//                     if field.name == constants::ARRAY_END_MARKER_NAME {
+//                         break;
+//                     }
+//                     let data_read = self.read_field_value(&field.info)?;
+//                     let json_value = self.to_json(&field.info.field_type, &data_read)?;
+
+//                     let obj: serde_json::Map<String, Value> =
+//                         vec![(field.name.clone(), json_value)].into_iter().collect();
+//                     result.push(Value::Object(obj));
+//                 }
+//                 Ok(Value::Array(result))
+//             }
+//             _ => Ok(Value::String(hex::encode_upper(data))), // TODO: default other types to Blob for now
+//         }
+//     }
 }
 
 #[allow(dead_code)]
@@ -173,13 +220,13 @@ impl Deserializer {
         Ok(())
     }
 
-    fn deserialize_account_id(&mut self) -> Result<AccountId, BinaryCodecError> {
+    fn deserialize_account_id(&mut self) -> Result<XrplType, BinaryCodecError> {
         let mut bytes = [0u8; 20];
         self.read_exact(&mut bytes)?;
-        Ok(AccountId(bytes))
+        Ok(XrplType::AccountId(enums::primitive::AccountId(bytes)))
     }
 
-    fn deserialize_amount(&mut self) -> Result<Amount, BinaryCodecError> {
+    fn deserialize_amount(&mut self) -> Result<XrplType, BinaryCodecError> {
         let byte = self.peek()?;
         let is_xrp = byte & 0x80 == 0;
         log::debug!("is_xrp {:?}", is_xrp);
@@ -190,7 +237,7 @@ impl Deserializer {
         }
     }
 
-    fn deserialize_issued_amount(&mut self) -> Result<Amount, BinaryCodecError> {
+    fn deserialize_issued_amount(&mut self) -> Result<XrplType, BinaryCodecError> {
 
         // 1 bit - XRP or Issued
         // 1 bit - Sign
@@ -226,10 +273,10 @@ impl Deserializer {
 
         let issued_amount = IssuedAmount::from_issued_value(IssuedValue::from_mantissa_exponent(mantissa, exponent as i8).unwrap(), CurrencyCode::Standard(StandardCurrencyCode::from_ascii_chars(to_3_ascii_chars(&currency_code_str.to_string()).unwrap()).unwrap()), AccountId(issuer_bytes)).unwrap();
 
-        Ok(Amount::Issued(issued_amount))
+        Ok(XrplType::Amount(Amount::Issued(issued_amount)))
     }
 
-    fn deserialize_native_amount(&mut self) -> Result<Amount, BinaryCodecError> {
+    fn deserialize_native_amount(&mut self) -> Result<XrplType, BinaryCodecError> {
         self.deserialize_amount()?;
         let mut bytes = [0u8; 8];
         self.read_exact(&mut bytes)?;
@@ -239,74 +286,74 @@ impl Deserializer {
 
         // Mask the value to keep only the lower 62 bits
         let masked_value = value & 0x3FFFFFFFFFFFFFFF;
-        Ok(Amount::Drops(DropsAmount(masked_value)))
+        Ok(XrplType::Amount(Amount::Drops(DropsAmount(masked_value))))
     }
 
-    pub fn deserialize_blob(&mut self, len: usize) -> Result<Blob, BinaryCodecError> {
+    pub fn deserialize_blob(&mut self, len: usize) -> Result<XrplType, BinaryCodecError> {
         let mut bytes = vec![0u8; len];
         self.read_exact(&mut bytes)?;
         log::debug!("Blob(bytes) {:?}", Blob(bytes.clone()));
-        Ok(Blob(bytes))
+        Ok(XrplType::Blob(enums::primitive::Blob(bytes)))
     }
 
-    fn deserialize_hash128(&mut self) -> Result<Hash128, BinaryCodecError> {
+    fn deserialize_hash128(&mut self) -> Result<XrplType, BinaryCodecError> {
         let mut bytes = [0u8; 16];
         self.read_exact(&mut bytes)?;
-        Ok(Hash128(bytes))
+        Ok(XrplType::Hash128(Hash128(bytes)))
     }
 
-    fn deserialize_hash160(&mut self) -> Result<Hash160, BinaryCodecError> {
+    fn deserialize_hash160(&mut self) -> Result<XrplType, BinaryCodecError> {
         let mut bytes = [0u8; 20];
         self.read_exact(&mut bytes)?;
-        Ok(Hash160(bytes))
+        Ok(XrplType::Hash160(Hash160(bytes)))
     }
 
-    fn deserialize_hash256(&mut self) -> Result<Hash256, BinaryCodecError> {
+    fn deserialize_hash256(&mut self) -> Result<XrplType, BinaryCodecError> {
         let mut bytes = [0u8; 32];
         self.read_exact(&mut bytes)?;
-        Ok(Hash256(bytes))
+        Ok(XrplType::Hash256(enums::primitive::Hash256(bytes)))
     }
 
-    fn deserialize_uint8(&mut self) -> Result<UInt8, BinaryCodecError> {
+    fn deserialize_uint8(&mut self) -> Result<XrplType, BinaryCodecError> {
         let mut bytes = [0u8; 1];
         self.read_exact(&mut bytes)?;
-        Ok(UInt8::from_be_bytes(bytes))
+        Ok(XrplType::UInt8(UInt8::from_be_bytes(bytes)))
     }
 
-    fn deserialize_uint16(&mut self) -> Result<UInt16, BinaryCodecError> {
+    fn deserialize_uint16(&mut self) -> Result<XrplType, BinaryCodecError> {
         let mut bytes = [0u8; 2];
         self.read_exact(&mut bytes)?;
-        Ok(UInt16::from_be_bytes(bytes))
+        Ok(XrplType::UInt16(UInt16::from_be_bytes(bytes)))
     }
 
-    fn deserialize_uint32(&mut self) -> Result<UInt32, BinaryCodecError> {
+    fn deserialize_uint32(&mut self) -> Result<XrplType, BinaryCodecError> {
         let mut bytes = [0u8; 4];
         self.read_exact(&mut bytes)?;
-        Ok(UInt32::from_be_bytes(bytes))
+        Ok(XrplType::UInt32(UInt32::from_be_bytes(bytes)))
     }
 
-    fn deserialize_uint64(&mut self) -> Result<Uint64, BinaryCodecError> {
+    fn deserialize_uint64(&mut self) -> Result<XrplType, BinaryCodecError> {
         let mut bytes = [0u8; 8];
         self.read_exact(&mut bytes)?;
-        Ok(Uint64::from_be_bytes(bytes))
+        Ok(XrplType::Uint64(Uint64::from_be_bytes(bytes)))
     }
 
-    fn deserialize_array(&mut self) -> Result<Vec<u8>, BinaryCodecError> {
-        let mut bytes = Vec::new();
-        while !self.end() {
-            let field = self.read_field()?;
-            if field.name == ARRAY_END_MARKER_NAME {
-                break;
-            }
-            let header: Vec<u8> = FieldId::from(field.info.clone()).into();
-            bytes.extend_from_slice(&header);
-            let data = self.read_field_value(&field.info)?;
-            bytes.extend_from_slice(data.as_ref());
-            bytes.extend_from_slice(OBJECT_END_MARKER_ARRAY);
-        }
-        bytes.extend_from_slice(ARRAY_END_MARKER);
-        Ok(bytes)
-    }
+    // fn deserialize_array(&mut self) -> Result<Vec<u8>, BinaryCodecError> {
+    //     let mut bytes = Vec::new();
+    //     while !self.end() {
+    //         let field = self.read_field()?;
+    //         if field.name == ARRAY_END_MARKER_NAME {
+    //             break;
+    //         }
+    //         let header: Vec<u8> = FieldId::from(field.info.clone()).into();
+    //         bytes.extend_from_slice(&header);
+    //         let data = self.read_field_value(&field.info)?;
+    //         bytes.extend_from_slice(data.as_ref());
+    //         bytes.extend_from_slice(OBJECT_END_MARKER_ARRAY);
+    //     }
+    //     bytes.extend_from_slice(ARRAY_END_MARKER);
+    //     Ok(bytes)
+    // }
 
     pub fn deserialize_object(&mut self) -> Result<HashMap<String, String>, BinaryCodecError> {
         let mut result = HashMap::new();
@@ -316,18 +363,18 @@ impl Deserializer {
                 break;
             }
             let data = self.read_field_value(&field.info)?;
-            let d = match field.info.field_type {
-                TypeCode::UInt16 => {
-                    u16::from_be_bytes(data.try_into().unwrap()).to_string()
-                }
-                TypeCode::UInt32 => {
-                    u32::from_be_bytes(data.try_into().unwrap()).to_string()
-                }
-                _ => {
-                    "".to_string()
-                }
-            };
-            result.insert(field.name, d);
+            // let d = match field.info.field_type {
+            //     TypeCode::UInt16 => {
+            //         u16::from_be_bytes(data.try_into().unwrap()).to_string()
+            //     }
+            //     TypeCode::UInt32 => {
+            //         u32::from_be_bytes(data.try_into().unwrap()).to_string()
+            //     }
+            //     _ => {
+            //         "".to_string()
+            //     }
+            // };
+            // result.insert(field.name, d);
         }
 
         log::debug!("Deserialize result {:?}", result);

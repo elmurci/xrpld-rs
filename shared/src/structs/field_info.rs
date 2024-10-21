@@ -2,7 +2,9 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::field_id::{FieldCode, TypeCode};
+use crate::enums::field_code::TypeCode;
+
+use super::field_id::FieldCode;
 
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
