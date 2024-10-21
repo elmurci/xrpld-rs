@@ -7,7 +7,7 @@ use tokio::time::sleep;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use crate::{peer, Peer, PeerTable};
+use crate::{Peer, PeerTable};
 
 /// Peers collection and communication through the XRPL protocol.
 #[derive(Debug)]
@@ -49,7 +49,7 @@ impl Network {
             } else {
                 Some(self.ips.to_vec())
             }
-        ).await;
+        ).await?;
         
         loop {
             let _ = self.update().await?;

@@ -7,4 +7,6 @@ pub mod enums;
 pub mod log;
 pub mod crypto;
 pub mod errors;
+pub mod xrpl;
+pub mod utils;
 

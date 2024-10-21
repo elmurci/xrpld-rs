@@ -3,18 +3,21 @@ use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
 use std::str::FromStr;
 use base64::Engine;
+use shared::enums::base58::Version;
 use shared::errors::network::{ConnectError, HandshakeError, SendRecvError};
+use shared::structs::field_info::field_info_lookup;
 use shared::structs::msg_validations::ValidatorBlob;
 use shared::structs::secp256k1_keys::Secp256k1Keys;
 use std::sync::Arc;
 use base64::prelude::BASE64_STANDARD;
 use shared::crypto::secp256k1::ecdsa::Signature;
 use proto::{EncodeDecode, Message as ProtoMessage, PingPong};
-use proto::Message::{Endpoints, Validation, Validatorlistcollection, Manifests, GetLedger, GetObject, StatusChange};
+use proto::Message::{PingPong as PingPongMsg, Endpoints, Validation, Validatorlistcollection, Manifests, GetLedger, GetObject, StatusChange, Transaction, ProposeLedger, HaveSet};
 use bytes::{Buf, BufMut, BytesMut};
 use shared::crypto::secp256k1::{Message, PublicKey};
 use shared::crypto::sha2::{Digest, Sha512};
 use openssl::ssl::{SslRef, SslVerifyMode};
+use shared::xrpl::deserializer::Deserializer as XrplDeserializer;
 use serde::{de, Deserialize, Deserializer, Serialize};
 use shared::enums::network::NetworkId;
 use shared::log;
@@ -171,7 +174,7 @@ impl Peer {
 
             let code = resp.code.unwrap();
 
-            log::debug!("Network:Peer Handshake response: {}", code);
+            log::debug!("Network:Peer Handshake response: {} - {}", code, resp.reason.unwrap());
             if code == 101 {
                 // self.peer_user_agent = Some(get_header!("Server").to_string());
                 let _ = get_header("Server")?;
@@ -372,7 +375,7 @@ impl Peer {
         pk_header: Cow<'_, str>,
         ssl: &SslRef,
     ) -> Result<PublicKey, HandshakeError> {
-        let pk_bytes = shared::crypto::base58_xrpl::decode(shared::crypto::base58_xrpl::Version::NodePublic, &*pk_header)
+        let pk_bytes = shared::crypto::base58_xrpl::decode(Version::NodePublic, &*pk_header)
             .map_err(|_| HandshakeError::InvalidPublicKey(pk_header.to_string()))?;
         let pk = PublicKey::from_slice(&pk_bytes)
             .map_err(|_| HandshakeError::InvalidPublicKey(pk_header.to_string()))?;
@@ -442,30 +445,6 @@ impl Peer {
     // Read message from peer.
     fn spawn_read_messages(self: Arc<Peer>) {
         let _join_handle = tokio::spawn(async move {
-            // bytes::BytesMut not shrink back in any case
-            // We can have max message 64MiB, in worst case there will be 64MiB per peer.
-            // Create own BufMut?
-            // As result `unsafe` and `unwrap`... but we have one buffer which used for most of messages.
-            // When buffer not enough we allocate new.
-            let mut read_buf = Box::new(BytesMut::new());
-
-            // mtMANIFESTS             = 2;
-            // mtPING                  = 3;
-            // mtCLUSTER               = 5;
-            // mtENDPOINTS             = 15;
-            // mtTRANSACTION           = 30;
-            // mtGET_LEDGER            = 31;
-            // mtLEDGER_DATA           = 32;
-            // mtPROPOSE_LEDGER        = 33;
-            // mtSTATUS_CHANGE         = 34;
-            // mtHAVE_SET              = 35;
-            // mtVALIDATION            = 41;
-            // mtGET_OBJECTS           = 42;
-            // mtGET_SHARD_INFO        = 50;
-            // mtSHARD_INFO            = 51;
-            // mtGET_PEER_SHARD_INFO   = 52;
-            // mtPEER_SHARD_INFO       = 53;
-            // mtVALIDATORLIST         = 54;
 
             loop {
             
@@ -481,7 +460,7 @@ impl Peer {
                 };
 
                 let result = match msg {
-                    proto::Message::PingPong(msg) => {
+                    PingPongMsg(msg) => {
                         if msg.is_ping() {
                             self.on_message_ping(msg).await
                         } else {
@@ -489,21 +468,21 @@ impl Peer {
                         }
                     }
                     Manifests(msg) => {
-                        log::info!("Network:Peer Peer Manifest message received. {}", msg.list.len());
+                        log::info!("Network:Peer Peer Manifests message received. {}", msg.list.len());
                         for item in &msg.list {
-                            log::info!("Network:Peer Peer Manifest: {:?}", item);
+                            log::debug!("Network:Peer Peer Manifest: {:?}", BASE64_STANDARD.encode(&item.stobject));
                         }
                         // TODO
                         Ok(())
                     }
                     GetLedger(msg) => {
-                        log::info!("Network:Peer GetLedger message received for {:?} - {:?}", hex::encode(&msg.ledger_hash.unwrap()).to_uppercase(), &msg.ledger_seq.unwrap());
+                        log::debug!("Network:Peer GetLedger message received for {:?} - {:?}", hex::encode(&msg.ledger_hash.unwrap()).to_uppercase(), &msg.ledger_seq.unwrap());
 
                         // TODO
                         Ok(())
                     }
                     StatusChange(msg) => {
-                        log::info!("Network:Peer Status Change message received {:?}", msg.ledger_seq.unwrap());
+                        log::debug!("Network:Peer Status Change message received, new ledger sequence is {:?}", msg.ledger_seq.unwrap());
                         // TODO
                         Ok(())
                     }
@@ -514,19 +493,41 @@ impl Peer {
                             // process validators
                             let validators = serde_json::from_slice::<ValidatorBlob>(&BASE64_STANDARD.decode(&blob.blob).unwrap()).unwrap();
                             for validator in &validators.validators {
-                                log::info!("Network:Peer Validator List Collection message received - Validator: {:?}", validator.validation_public_key);
+                                log::info!("Network:Peer Validator List Collection message received - Validator: {}", validator.validation_public_key);
                             }
                         }
                         // TODO
                         Ok(())
                     }
                     GetObject(msg) => {
-                        log::info!("Network:Peer Get Object by hash message received. {:?} ({:?})", msg.r#type(), hex::encode(msg.ledger_hash.unwrap()).to_uppercase());
+                        log::debug!("Network:Peer Get Object by hash message received. {:?} ({})", msg.r#type(), hex::encode(msg.ledger_hash.unwrap()).to_uppercase());
                         // TODO
                         Ok(())
                     }
                     Validation(msg) => {
-                        log::info!("Network:Peer Validation message received. {:?}", hex::encode(msg.validation).to_uppercase());
+                        log::debug!("Network:Peer Validation message received. {}", hex::encode(msg.validation).to_uppercase());
+                        // TODO
+                        Ok(())
+                    }
+                    Transaction(msg) => {
+                        let tx_hex = hex::encode(&msg.raw_transaction).to_uppercase();
+                        log::debug!("Network:Peer Transaction message received: {}", tx_hex);
+                        // let deserializer = &mut XrplDeserializer::new(
+                        //     msg.raw_transaction.clone(),
+                        //     field_info_lookup(),
+                        // );
+                        // let data = deserializer.deserialize_object().unwrap();
+                        // log::debug!("Network:Peer Transaction message decoded: {:?}", data);
+                        // TODO
+                        Ok(())
+                    }
+                    ProposeLedger(msg) => {
+                        log::debug!("Network:Peer Propose Ledger message received. {}", msg.propose_seq);
+                        // TODO
+                        Ok(())
+                    }
+                    HaveSet(msg) => {
+                        log::debug!("Network:Peer Transaction message received. {}", hex::encode(msg.hash).to_uppercase());
                         // TODO
                         Ok(())
                     }

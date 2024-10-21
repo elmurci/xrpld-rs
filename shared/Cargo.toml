@@ -19,7 +19,9 @@ serde_json.workspace = true
 log.workspace = true
 bytes.workspace = true
 native-tls.workspace = true
-
+xrpl_types.workspace = true
+spin.workspace = true
+ascii.workspace = true
 
 # local
 proto = { path = "../proto" }

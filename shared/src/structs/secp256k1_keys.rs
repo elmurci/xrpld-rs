@@ -3,8 +3,9 @@ use std::borrow::Cow;
 use secp256k1::ecdsa::Signature;
 use secp256k1::rand::rngs::OsRng;
 use secp256k1::{Message, PublicKey, SecretKey};
-use crate::crypto::base58_xrpl::{encode, Version};
+use crate::crypto::base58_xrpl::encode;
 use crate::crypto::SECP256K1;
+use crate::enums::base58::Version;
 
 /// Simplified interface to [`secp256k1`][secp256k1] crate.
 #[derive(Debug)]
