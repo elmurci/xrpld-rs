@@ -2,7 +2,8 @@ use serde::Deserialize;
 use bytes::{Buf, Bytes};
 use core::str;
 use std::collections::HashMap;
-use crate::{enums::{self, amount::{Amount, DropsAmount, IssuedAmount, IssuedValue}, currency_code::{CurrencyCode, StandardCurrencyCode}, field_code::TypeCode, primitive::{AccountId, Blob, Hash128, Hash160, UInt16, UInt32, UInt8, Uint64, XrplType}}, structs::{ field_id::FieldId, field_info::FieldInfo}};
+use crate::structs::st_object::StObject;
+use crate::{enums::{self, amount::{Amount, DropsAmount, IssuedAmount, IssuedValue}, base58, currency_code::{CurrencyCode, StandardCurrencyCode}, field_code::TypeCode, primitive::{AccountId, Blob, Hash128, Hash160, UInt16, UInt32, UInt8, Uint64, XrplType}}, structs::{ field_id::FieldId, field_info::FieldInfo}};
 use crate::utils::string::to_3_ascii_chars;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -98,7 +99,6 @@ impl Deserializer {
     fn read_field_ordinal(&mut self) -> Result<u32, BinaryCodecError> {
         let mut type_code = self.read_u8()? as u32;
         let mut nth = type_code & 15;
-        
         type_code >>= 4;
         if type_code == 0 {
             type_code = self.read_u8()? as u32;
@@ -133,17 +133,17 @@ impl Deserializer {
         } else {
             None
         };
-        
-        let bytes: XrplType = match info.field_type {
+
+        let value: XrplType = match info.field_type {
             TypeCode::Hash256 => self.deserialize_hash256()?,
             TypeCode::AccountId => self.deserialize_account_id()?,
             TypeCode::Blob => {
                 let hint =
                     size_hint.ok_or(BinaryCodecError::FieldNotFound("missing hint".into()))?;
-                self.deserialize_blob(hint)?
+                    self.deserialize_blob(hint)?
             }
-            // TypeCode::Object => self.deserialize_object()?,
-            // TypeCode::Array => self.deserialize_array()?,
+            TypeCode::Object => self.deserialize_object()?,
+            TypeCode::Array => self.deserialize_array()?,
             TypeCode::Hash128 => self.deserialize_hash128()?,
             TypeCode::Hash160 => self.deserialize_hash160()?,
             TypeCode::Amount => self.deserialize_amount()?,
@@ -151,9 +151,9 @@ impl Deserializer {
             TypeCode::UInt16 => self.deserialize_uint16()?,
             TypeCode::UInt32 => self.deserialize_uint32()?,
             TypeCode::UInt64 => self.deserialize_uint64()?,
-            _ => self.deserialize_uint64()?, // TODO: default other types to Blob for now
+            _ => panic!("fix this"), // TODO: fix this
         };
-        Ok(bytes)
+        Ok(value)
     }
 
     pub fn end(&mut self) -> bool {
@@ -229,7 +229,6 @@ impl Deserializer {
     fn deserialize_amount(&mut self) -> Result<XrplType, BinaryCodecError> {
         let byte = self.peek()?;
         let is_xrp = byte & 0x80 == 0;
-        log::debug!("is_xrp {:?}", is_xrp);
         if is_xrp {
             self.deserialize_native_amount()
         } else {
@@ -246,15 +245,9 @@ impl Deserializer {
         // 20 bits - Currency
         // 20 bits - Issuer
 
-        log::debug!("empezamos {:?}", self.bytes.to_vec().len());
-
         let mut bytes = [0u8; 48];
         
         self.read_exact(&mut bytes)?;
-
-        log::debug!("Is it Issued? {:?}", (bytes[0] & 0b1000_0000) != 0);
-
-        log::debug!("Is it positive sign? {:?}",  (bytes[0] & 0b0100_0000) != 0);
 
         let exponent: i32 = ((((&bytes[0] & 0x3f) << 2) + ((&bytes[1] & 0xff) >> 6)) as i16 - 97).into();
 
@@ -264,20 +257,15 @@ impl Deserializer {
         let mantissa = i64::from_be_bytes(bytes[0..8].try_into().expect("slice with incorrect length"));
         let value = mantissa as f64 * f64::powi(10f64, exponent);
    
-        log::debug!("value {}", value);
         let currency_code_bytes: [u8; 20] = bytes[8..28].try_into().expect("slice with incorrect length");
         let currency_code_str = String::from_utf8_lossy(&currency_code_bytes[12..15]);
-        log::debug!("currency code {}", currency_code_str);
         let issuer_bytes: [u8; 20] = bytes[28..48].try_into().expect("slice with incorrect length");
-        log::debug!("issuer {:?}", AccountId(issuer_bytes).to_address());
-
         let issued_amount = IssuedAmount::from_issued_value(IssuedValue::from_mantissa_exponent(mantissa, exponent as i8).unwrap(), CurrencyCode::Standard(StandardCurrencyCode::from_ascii_chars(to_3_ascii_chars(&currency_code_str.to_string()).unwrap()).unwrap()), AccountId(issuer_bytes)).unwrap();
-
         Ok(XrplType::Amount(Amount::Issued(issued_amount)))
     }
 
     fn deserialize_native_amount(&mut self) -> Result<XrplType, BinaryCodecError> {
-        self.deserialize_amount()?;
+        
         let mut bytes = [0u8; 8];
         self.read_exact(&mut bytes)?;
         
@@ -292,7 +280,6 @@ impl Deserializer {
     pub fn deserialize_blob(&mut self, len: usize) -> Result<XrplType, BinaryCodecError> {
         let mut bytes = vec![0u8; len];
         self.read_exact(&mut bytes)?;
-        log::debug!("Blob(bytes) {:?}", Blob(bytes.clone()));
         Ok(XrplType::Blob(enums::primitive::Blob(bytes)))
     }
 
@@ -338,48 +325,62 @@ impl Deserializer {
         Ok(XrplType::Uint64(Uint64::from_be_bytes(bytes)))
     }
 
-    // fn deserialize_array(&mut self) -> Result<Vec<u8>, BinaryCodecError> {
-    //     let mut bytes = Vec::new();
-    //     while !self.end() {
-    //         let field = self.read_field()?;
-    //         if field.name == ARRAY_END_MARKER_NAME {
-    //             break;
-    //         }
-    //         let header: Vec<u8> = FieldId::from(field.info.clone()).into();
-    //         bytes.extend_from_slice(&header);
-    //         let data = self.read_field_value(&field.info)?;
-    //         bytes.extend_from_slice(data.as_ref());
-    //         bytes.extend_from_slice(OBJECT_END_MARKER_ARRAY);
-    //     }
-    //     bytes.extend_from_slice(ARRAY_END_MARKER);
-    //     Ok(bytes)
-    // }
-
-    pub fn deserialize_object(&mut self) -> Result<HashMap<String, String>, BinaryCodecError> {
-        let mut result = HashMap::new();
+    fn deserialize_array(&mut self) -> Result<XrplType, BinaryCodecError> {
+        let mut bytes = Vec::new();
         while !self.end() {
+            let field = self.read_field()?;
+            if field.name == ARRAY_END_MARKER_NAME {
+                break;
+            }
+            let header: Vec<u8> = FieldId::from(field.info.clone()).into();
+            bytes.extend_from_slice(&header);
+            let data = self.read_field_value(&field.info)?;
+            let data_clone = bytes.clone();
+            bytes.extend_from_slice(&data_clone);
+            bytes.extend_from_slice(OBJECT_END_MARKER_ARRAY);
+        }
+        bytes.extend_from_slice(ARRAY_END_MARKER);
+        Ok(XrplType::Array(bytes))
+    }
+
+    pub fn deserialize_object(&mut self) -> Result<XrplType, BinaryCodecError> {
+        let mut result = HashMap::new();
+        let mut x = 0;
+        while x < 1 {   // !self.end() {
             let field = self.read_field()?;
             if field.name == OBJECT_END_MARKER_NAME {
                 break;
             }
             let data = self.read_field_value(&field.info)?;
-            // let d = match field.info.field_type {
-            //     TypeCode::UInt16 => {
-            //         u16::from_be_bytes(data.try_into().unwrap()).to_string()
-            //     }
-            //     TypeCode::UInt32 => {
-            //         u32::from_be_bytes(data.try_into().unwrap()).to_string()
-            //     }
-            //     _ => {
-            //         "".to_string()
-            //     }
-            // };
-            // result.insert(field.name, d);
+            let d = match field.info.field_type {
+                _ => {
+                    "a".to_string()
+                }
+            };
+            result.insert(field.name, d);
+            // REMOVE
+            x = 1;
         }
 
         log::debug!("Deserialize result {:?}", result);
 
-        Ok(result)
+        Ok(XrplType::StObject(
+            StObject {
+                transaction_type: None,
+                flags: None,
+                sequence: None,
+                last_ledger_sequence: None,
+                amount: None,
+                fee: None,
+                send_max: None,
+                signing_pub_key: None,
+                txt_signature: None,
+                account: None,
+                destination: None,
+                paths: None,
+                memos: None,
+            }
+        ))
     }
 }
 

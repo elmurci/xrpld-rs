@@ -1,4 +1,6 @@
-use crate::errors::binary_codec::BinaryCodecError::{self, InvalidData};
+use serde::{Deserialize, Serialize};
+
+use crate::{errors::binary_codec::BinaryCodecError::{self, InvalidData}, structs::st_object::StObject};
 use core::{fmt, fmt::{Debug, Formatter}};
 
 use super::amount::Amount;
@@ -16,9 +18,11 @@ pub enum XrplType {
     UInt32(UInt32),
     Uint64(Uint64),
     Amount(Amount),
+    Array(Vec<u8>),
+    StObject(StObject),
 }
 
-#[derive(Clone, Copy, Default, Eq, PartialEq, Hash)]
+#[derive(Clone, Copy, Default, Eq, Deserialize, Serialize, PartialEq, Hash)]
 pub struct AccountId(pub [u8; 20]);
 
 impl AccountId {
@@ -49,7 +53,7 @@ impl AccountId {
     }
 }
 
-#[derive(Clone, Eq, PartialEq, Hash)]
+#[derive(Clone, Eq, PartialEq, Deserialize, Serialize, Hash)]
 pub struct Blob(pub Vec<u8>);
 
 #[derive(Clone, Copy, Eq, PartialEq, Hash)]
@@ -138,6 +142,16 @@ impl Debug for Hash128 {
         for i in &self.0 {
             write!(f, "{:02X}", i)?;
         }
+        Ok(())
+    }
+}
+
+impl Debug for XrplType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        if f.alternate() {
+            write!(f, "0x")?;
+        }
+        write!(f, "-")?;
         Ok(())
     }
 }

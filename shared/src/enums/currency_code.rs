@@ -1,9 +1,10 @@
 use ascii::{AsciiChar, AsciiStr, AsciiString};
+use serde::{Deserialize, Serialize};
 use core::{fmt, fmt::{Debug, Display, Formatter}, str::FromStr};
 use crate::errors::binary_codec::BinaryCodecError::InvalidData;
 use crate::errors::binary_codec::BinaryCodecError;
 
-#[derive(Debug, Eq, PartialEq, Clone, Copy)]
+#[derive(Debug, Eq, PartialEq, Deserialize, Serialize, Clone, Copy)]
 pub enum CurrencyCode {
     /// Xrp special case, see <https://xrpl.org/currency-formats.html#standard-currency-codes>
     Xrp,
@@ -78,7 +79,7 @@ impl fmt::Display for CurrencyCode {
 }
 
 /// Iso style currency code <https://xrpl.org/currency-formats.html#standard-currency-codes>
-#[derive(Debug, Eq, PartialEq, Clone, Copy)]
+#[derive(Debug, Eq, PartialEq, Deserialize, Serialize, Clone, Copy)]
 // tuple element is private since it is validated when the StandardCurrencyCode value is created
 pub struct StandardCurrencyCode([AsciiChar; 3]);
 
@@ -128,7 +129,7 @@ impl Display for StandardCurrencyCode {
 }
 
 /// Hex style currency code <https://xrpl.org/currency-formats.html#nonstandard-currency-codes>
-#[derive(Debug, Eq, PartialEq, Clone, Copy)]
+#[derive(Debug, Eq, PartialEq, Deserialize, Serialize, Clone, Copy)]
 // tuple element is private since it is validated when the NonStandardCurrencyCode value is created
 pub struct NonStandardCurrencyCode([u8; 20]);
 

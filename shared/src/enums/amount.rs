@@ -1,8 +1,10 @@
+use serde::{Deserialize, Serialize};
+
 use crate::errors::binary_codec::BinaryCodecError;
 use crate::errors::binary_codec::BinaryCodecError::{InvalidData, OutOfRange};
 use super::{currency_code::CurrencyCode, primitive::AccountId};
 
-#[derive(Debug, Eq, PartialEq, Clone, Copy)]
+#[derive(Debug, Eq, PartialEq, Deserialize, Serialize, Clone, Copy)]
 pub enum Amount {
     Issued(IssuedAmount),
     Drops(DropsAmount),
@@ -34,7 +36,7 @@ impl Amount {
 
 /// Amount of XRP in drops, see <https://xrpl.org/currency-formats.html#xrp-amounts>
 /// and <https://xrpl.org/serialization.html#amount-fields>
-#[derive(Debug, Eq, PartialEq, Clone, Copy)]
+#[derive(Debug, Eq, PartialEq, Deserialize, Serialize, Clone, Copy)]
 // tuple element is private since it is validated when the DropsAmount value is created
 pub struct DropsAmount(pub u64);
 
@@ -56,7 +58,7 @@ impl DropsAmount {
 
 /// Amount of issued token. See <https://xrpl.org/currency-formats.html#token-amounts>
 /// and <https://xrpl.org/serialization.html#amount-fields>
-#[derive(Debug, Eq, PartialEq, Clone, Copy)]
+#[derive(Debug, Eq, PartialEq, Deserialize, Serialize, Clone, Copy)]
 pub struct IssuedAmount {
     // fields are private since it is validated when the IssuedAmount value is created
     value: IssuedValue,
@@ -99,7 +101,7 @@ impl IssuedAmount {
 }
 
 /// The value of issued amount, see <https://xrpl.org/serialization.html#token-amount-format>
-#[derive(Debug, Eq, PartialEq, Clone, Copy)]
+#[derive(Debug, Eq, PartialEq, Deserialize, Serialize, Clone, Copy)]
 pub struct IssuedValue {
     // fields are private since it is validated when the IssuedValue value is created
     mantissa: i64,
