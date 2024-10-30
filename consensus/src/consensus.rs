@@ -1,6 +1,3 @@
-use shared::log;
-
-
 /// Encode given input with prefix to base58-check based on Ripple alphabet.
 pub fn should_close_ledger(
     anyTransactions: bool,

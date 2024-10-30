@@ -1,14 +1,24 @@
 {
-    "network_id": "1",
+    "network_id": "0",
     "ips": [
         {
             "ip": "127.0.0.1",
             "port": "51235"
         },
         {
-            "ip": "s.altnet.rippletest.net",
+            "ip": "r.ripple.com",
             "port": "51235"
         }
     ],
-    "ssl_verify": false
+    "ssl_verify": false,
+    "bootstrap_nodes": [
+        {
+            "ip": "r.ripple.com",
+            "port": "51235"
+        },
+        {
+            "ip": "sahyadri.isrdc.in",
+            "port": "51235"
+        }
+    ]
 }

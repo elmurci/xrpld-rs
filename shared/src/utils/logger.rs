@@ -1,4 +1,4 @@
-//! Simple logger, just JSON to Stdout.
+use crate::enums::utils::{LogType, Process};
 use std::io::{self, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -9,7 +9,7 @@ use serde_json::json;
 pub use log::{debug, error, info, trace, warn};
 
 /// Initialize logger with [`env_logger`](https://crates.io/crates/env_logger).
-pub fn init() {
+pub fn log_init() {
     let env = Env::default()
         .default_filter_or("info") // RUST_LOG
         .default_write_style_or("never"); // RUST_LOG_STYLE
@@ -52,4 +52,15 @@ fn log_format(buf: &mut fmt::Formatter, record: &Record<'_>) -> io::Result<()> {
         }
     }
     writeln!(buf, "}}")
+}
+
+pub fn log(process: Process, log_type: LogType, key: &str, message: String) {
+    let log_str = format!("{process}:{key} {message}");
+    match log_type {
+        LogType::Info => log::info!("{}", log_str),
+        LogType::Debug => log::debug!("{}", log_str),
+        LogType::Warn => log::warn!("{}", log_str),
+        LogType::Trace => log::trace!("{}", log_str),
+        LogType::Error => log::error!("{}", log_str),
+    }
 }

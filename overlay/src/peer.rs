@@ -4,15 +4,16 @@ use std::pin::Pin;
 use std::str::FromStr;
 use base64::Engine;
 use shared::enums::base58::Version;
+use shared::enums::utils::{LogType, Process};
 use shared::errors::network::{ConnectError, HandshakeError, SendRecvError};
 use shared::structs::field_info::field_info_lookup;
-use shared::structs::msg_validations::ValidatorBlob;
+use shared::structs::validator_message::ValidatorBlob;
 use shared::structs::secp256k1_keys::Secp256k1Keys;
 use std::sync::Arc;
 use base64::prelude::BASE64_STANDARD;
 use shared::crypto::secp256k1::ecdsa::Signature;
 use proto::{EncodeDecode, Message as ProtoMessage, PingPong};
-use proto::Message::{PingPong as PingPongMsg, Endpoints, Validation, Validatorlistcollection, Manifests, GetLedger, GetObject, StatusChange, Transaction, ProposeLedger, HaveSet};
+use proto::Message::{PingPong as PingPongMsg, Endpoints, Validation, Validatorlistcollection, Manifests, StatusChange, GetObject, GetLedger, Transaction, ProposeLedger, HaveSet};
 use bytes::{Buf, BufMut, BytesMut};
 use shared::crypto::secp256k1::{Message, PublicKey};
 use shared::crypto::sha2::{Digest, Sha512};
@@ -20,13 +21,15 @@ use openssl::ssl::{SslRef, SslVerifyMode};
 use shared::xrpl::deserializer::Deserializer as XrplDeserializer;
 use serde::{de, Deserialize, Deserializer, Serialize};
 use shared::enums::network::NetworkId;
-use shared::log;
+use shared::utils::logger::log;
 use tokio::io::{self, AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Mutex;
 use openssl::ssl::{SslMethod, SslConnector};
 use tokio_openssl::SslStream;
 use tokio::net::TcpStream;
 use super::PeerTable;
+
+const LOG_KEY:&str = "Peer";
 
 #[derive(Debug)]
 struct PeerPing {
@@ -40,7 +43,7 @@ pub struct Peer {
     // node_key as ref?
     node_key: Arc<Secp256k1Keys>,
     peer_table: Arc<PeerTable>,
-    network_id: NetworkId,
+    network_id: Arc<NetworkId>,
     peer_addr: SocketAddr,
     ping_data: Mutex<PeerPing>,
     stream: Mutex<SslStream<tokio::net::TcpStream>>,
@@ -54,7 +57,7 @@ impl Peer {
         addr: SocketAddr,
         node_key: Arc<Secp256k1Keys>,
         peer_table: Arc<PeerTable>,
-        network_id: NetworkId,
+        network_id: Arc<NetworkId>,
         ssl_verify: bool,
     ) -> Result<Arc<Peer>, ConnectError> {
         
@@ -70,7 +73,7 @@ impl Peer {
         if tcp_stream.is_err() {
 
             let err = tcp_stream.unwrap_err();
-            log::warn!("Network:Peer Could not connect with peer: {}: {}", addr, err);
+            log(Process::Networking, LogType::Warn, &LOG_KEY, format!("Could not connect with peer: {}: {}", addr, err));
             return Err(ConnectError::Io(err));
         }
         
@@ -78,7 +81,7 @@ impl Peer {
         let mut stream = SslStream::new(ssl_stream, tcp_stream.unwrap()).unwrap();
         let _ = SslStream::connect(Pin::<_>::new(&mut stream)).await;
         
-        log::debug!("Network:Peer Connected to server {:?}", addr);
+        log(Process::Networking, LogType::Debug, &LOG_KEY, format!("Network:Peer Connected to server {:?}", addr));
 
         Ok(Arc::new(Peer {
             node_key,
@@ -95,7 +98,7 @@ impl Peer {
 
     /// Outgoing handshake process.
     pub async fn connect(self: &Arc<Self>) -> Result<(), HandshakeError> {
-        log::debug!("Network:Peer Starting handshake with: {}", self.peer_addr);
+        log(Process::Networking, LogType::Debug, &LOG_KEY, format!("Starting handshake with: {}", self.peer_addr));
         self.handshake_send_request().await?;
         self.handshake_read_response().await?;
         Arc::clone(&self).spawn_read_messages();
@@ -160,7 +163,7 @@ impl Peer {
                 continue;
             }
 
-            log::debug!("Network:Peer Handshake response status {:?}", status);
+            log(Process::Networking, LogType::Debug, &LOG_KEY, format!("Handshake response status {:?}", status));
 
             let find_header = |name| {
                 resp.headers
@@ -174,7 +177,8 @@ impl Peer {
 
             let code = resp.code.unwrap();
 
-            log::debug!("Network:Peer Handshake response: {} - {}", code, resp.reason.unwrap());
+            log(Process::Networking, LogType::Debug, &LOG_KEY, format!("Handshake response: {} - {:#?}", code, resp.reason));
+
             if code == 101 {
                 // self.peer_user_agent = Some(get_header!("Server").to_string());
                 let _ = get_header("Server")?;
@@ -224,7 +228,7 @@ impl Peer {
                         .map_err(|e| HandshakeError::InvalidNetworkId(e.to_string()))?,
                     None => NetworkId::Main,
                 };
-                if network_id != self.network_id {
+                if network_id.value() != self.network_id.value() {
                     let expected = self.network_id.value();
                     let received = network_id.value();
                     let reason = format!("{} instead of {}", received, expected);
@@ -250,7 +254,7 @@ impl Peer {
 
                 let _verify_signature = self.handshake_verify_signature(sig, public_key.clone(), stream.ssl()).await?;
                 
-                log::debug!("Network:Peer Peer Public Key: {}", public_key.to_string());
+                log(Process::Networking, LogType::Debug, &LOG_KEY, format!("Peer Public Key: {}", public_key.to_string()));
 
                 buf.advance(status.unwrap());
             } else {
@@ -305,9 +309,10 @@ impl Peer {
         match code {
             101 => {
                 if !buf.is_empty() {
-                    log::error!("Network:Peer Read more data than expected on successful handshake...");
+                    let error_str = String::from("Read more data than expected on successful handshake..");
+                    log(Process::Networking, LogType::Debug, &LOG_KEY, error_str.clone());
                     return Err(HandshakeError::BadRequest(
-                        "Read more data than expected on successful handshake...".to_string(),
+                        error_str,
                     ));
                 }
 
@@ -405,7 +410,7 @@ impl Peer {
                 ping.no_ping += 1;
                 if ping.no_ping > 10 {
                     // TODO: shutdown
-                    log::warn!("Network:Peer No ping response for more than 10 seconds, shutdown: {}", self.peer_addr);
+                    log(Process::Networking, LogType::Warn, &LOG_KEY, format!("No ping response for more than 10 seconds, shutdown: {}", self.peer_addr));
                 }
 
                 if ping.seq.is_none() {
@@ -420,7 +425,7 @@ impl Peer {
 
     ///  Send message to peer.
     pub async fn send_message(&self, msg: ProtoMessage) -> Result<(), SendRecvError> {
-        log::debug!("Network:Peer Send message to peer: {:?}", msg);
+        log(Process::Networking, LogType::Debug, &LOG_KEY, format!("Send message to peer: {:?}", msg));
         let size = msg.encoded_len();
         let mut bytes = BytesMut::with_capacity(size + 4);
         // Uncompressed value, the top six bits of the first byte are 0.
@@ -437,7 +442,7 @@ impl Peer {
         let _join_handle = tokio::spawn(async move {
             // TODO: shutdown
             if let Err(error) = self.send_message(msg).await {
-                log::error!("Peer send error: {}", error);
+                log(Process::Networking, LogType::Error, &LOG_KEY, format!("Peer send error: {}", error));
             }
         });
     }
@@ -453,7 +458,7 @@ impl Peer {
                         msg
                     },
                     Err(error) => {
-                        log::error!("Network:Peer Error: Peer spawn_read_messages: {}", error);
+                        log(Process::Networking, LogType::Error, &LOG_KEY, format!("Error: Peer spawn_read_messages: {}", error));
                         // log::debug!("{:?}", hex::encode(&read_buf.chunk()));
                         break;
                     }
@@ -468,77 +473,83 @@ impl Peer {
                         }
                     }
                     Manifests(msg) => {
-                        log::info!("Network:Peer Peer Manifests message received. {}", msg.list.len());
-                        for item in &msg.list {
-                            log::debug!("Network:Peer Peer Manifest: {:?}", BASE64_STANDARD.encode(&item.stobject));
-                        }
+                        log(Process::Networking, LogType::Info, &LOG_KEY, format!("Peer Manifests message received. {} received", msg.list.len()));
+                        // for item in &msg.list {
+                        //     // log::debug!("Network:Peer Peer Manifest");
+                        //     // BASE64_STANDARD.encode(&item.stobject)
+                        // }
                         // TODO
                         Ok(())
                     }
                     GetLedger(msg) => {
-                        log::debug!("Network:Peer GetLedger message received for {:?} - {:?}", hex::encode(&msg.ledger_hash.unwrap()).to_uppercase(), &msg.ledger_seq.unwrap());
-
+                        log(Process::Networking, LogType::Info, &LOG_KEY, format!("GetLedger message received for {:?} - {:?}", hex::encode(&msg.ledger_hash.unwrap()).to_uppercase(), &msg.ledger_seq.unwrap()));
                         // TODO
                         Ok(())
                     }
                     StatusChange(msg) => {
-                        log::debug!("Network:Peer Status Change message received, new ledger sequence is {:?}", msg.ledger_seq.unwrap());
+                        log(Process::Networking, LogType::Info, &LOG_KEY, format!("Status Change message received, new ledger sequence is {:?}", msg.ledger_seq.unwrap()));
                         // TODO
                         Ok(())
                     }
                     Validatorlistcollection(msg) => {
+                        log(Process::Networking, LogType::Info, &LOG_KEY, format!("Validator List Collection received: {}", msg.blobs.len()));
                         for blob in &msg.blobs {
                             // First, validate the signature
                             // Check expiration
                             // process validators
                             let validators = serde_json::from_slice::<ValidatorBlob>(&BASE64_STANDARD.decode(&blob.blob).unwrap()).unwrap();
                             for validator in &validators.validators {
-                                log::info!("Network:Peer Validator List Collection message received - Validator: {}", validator.validation_public_key);
+                                log(Process::Networking, LogType::Debug, &LOG_KEY, format!("Validator List Collection message received - Validator: {}", validator.validation_public_key));
                             }
                         }
                         // TODO
                         Ok(())
                     }
                     GetObject(msg) => {
-                        log::debug!("Network:Peer Get Object by hash message received. {:?} ({})", msg.r#type(), hex::encode(msg.ledger_hash.unwrap()).to_uppercase());
+                        log(Process::Networking, LogType::Info, &LOG_KEY, format!("Get Object by hash message received. {:?} ({})", msg.r#type(), hex::encode(msg.ledger_hash.unwrap()).to_uppercase()));
                         // TODO
                         Ok(())
                     }
                     Validation(msg) => {
-                        log::debug!("Network:Peer Validation message received. {}", hex::encode(msg.validation).to_uppercase());
+                        let deserializer = &mut XrplDeserializer::new(
+                            msg.validation.clone(),
+                            field_info_lookup().clone(),
+                        );
+                        let msg = deserializer.deserialize_object();
+                        log(Process::Networking, LogType::Info, &LOG_KEY, format!("Validation message received from {:?}", msg.unwrap().unwrap_object().consensus_hash));
                         // TODO
                         Ok(())
                     }
                     Transaction(msg) => {
-                        let tx_hex = hex::encode(&msg.raw_transaction).to_uppercase();
-                        log::debug!("Network:Peer Transaction message received: {}", tx_hex);
-                        // let deserializer = &mut XrplDeserializer::new(
-                        //     msg.raw_transaction.clone(),
-                        //     field_info_lookup(),
-                        // );
-                        // let data = deserializer.deserialize_object().unwrap();
-                        // log::debug!("Network:Peer Transaction message decoded: {:?}", data);
+                        // let tx_hex = hex::encode(&msg.raw_transaction).to_uppercase();
+                        let deserializer = &mut XrplDeserializer::new(
+                            msg.raw_transaction.clone(),
+                            field_info_lookup().clone(), // TODO: review this
+                        );
+                        let data = deserializer.deserialize_object().unwrap();
+                        log(Process::Networking, LogType::Info, &LOG_KEY, format!("Transaction message received. signing_pub_key: {}", data.clone().unwrap_object().signing_pub_key.unwrap()));
+                        log(Process::Networking, LogType::Debug, &LOG_KEY, format!("Transaction message received: {:?}", data));
                         // TODO
                         Ok(())
                     }
                     ProposeLedger(msg) => {
-                        log::debug!("Network:Peer Propose Ledger message received. {}", msg.propose_seq);
+                        log(Process::Networking, LogType::Info, &LOG_KEY, format!("ProposeLedger message received from {}", hex::encode(&msg.node_pub_key).to_uppercase()));
                         // TODO
                         Ok(())
                     }
                     HaveSet(msg) => {
-                        log::debug!("Network:Peer Transaction message received. {}", hex::encode(msg.hash).to_uppercase());
+                        log(Process::Networking, LogType::Info, &LOG_KEY, format!("HaveSet message received. (Hash: {})", hex::encode(msg.hash).to_uppercase()));
                         // TODO
                         Ok(())
                     }
                     Endpoints(msg) => self.on_message_endpoints(msg).await,
                     _ => {
-                        log::error!("Network:Peer Unhandled type. {:?}", msg);
+                        // log::error!("Network:Peer Unhandled type. {:?}", msg);
                         Ok(())
                     },
                 };
                 if let Err(error) = result {
-                    log::error!("Network:Peer Peer message handler error: {}", error);
+                    log(Process::Networking, LogType::Error, &LOG_KEY, format!("Peer message handler error: {}", error));
                     break;
                 }
             }
@@ -636,7 +647,7 @@ impl Peer {
         self: &Arc<Self>,
         msg: PingPong,
     ) -> Result<(), std::convert::Infallible> {
-        log::debug!("Network:Peer Received ping message: {:?}", msg);
+        log(Process::Networking, LogType::Debug, &LOG_KEY, format!("Received ping message: {:?}", msg));
         let msg = PingPong::build_pong(msg.sequence());
         Arc::clone(self).spawn_send_message(ProtoMessage::PingPong(msg));
         Ok(())

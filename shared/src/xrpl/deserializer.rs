@@ -2,20 +2,10 @@ use serde::Deserialize;
 use bytes::{Buf, Bytes};
 use core::str;
 use std::collections::HashMap;
+use crate::errors::binary_codec::BinaryCodecError;
 use crate::structs::st_object::StObject;
 use crate::{enums::{self, amount::{Amount, DropsAmount, IssuedAmount, IssuedValue}, base58, currency_code::{CurrencyCode, StandardCurrencyCode}, field_code::TypeCode, primitive::{AccountId, Blob, Hash128, Hash160, UInt16, UInt32, UInt8, Uint64, XrplType}}, structs::{ field_id::FieldId, field_info::FieldInfo}};
 use crate::utils::string::to_3_ascii_chars;
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum BinaryCodecError {
-    OutOfRange(String),
-    FieldOrder(String),
-    InvalidField(String),
-    InvalidLength(String),
-    FieldNotFound(String),
-    InsufficientBytes(String),
-    Overflow,
-}
 
 const OBJECT_NAME: &str = "STObject";
 const OBJECT_END_MARKER_NAME: &str = "ObjectEndMarker";
@@ -133,7 +123,6 @@ impl Deserializer {
         } else {
             None
         };
-
         let value: XrplType = match info.field_type {
             TypeCode::Hash256 => self.deserialize_hash256()?,
             TypeCode::AccountId => self.deserialize_account_id()?,
@@ -151,7 +140,6 @@ impl Deserializer {
             TypeCode::UInt16 => self.deserialize_uint16()?,
             TypeCode::UInt32 => self.deserialize_uint32()?,
             TypeCode::UInt64 => self.deserialize_uint64()?,
-            _ => panic!("fix this"), // TODO: fix this
         };
         Ok(value)
     }
@@ -345,42 +333,46 @@ impl Deserializer {
 
     pub fn deserialize_object(&mut self) -> Result<XrplType, BinaryCodecError> {
         let mut result = HashMap::new();
-        let mut x = 0;
-        while x < 1 {   // !self.end() {
+        // TODO: this
+        while !self.end() {
             let field = self.read_field()?;
             if field.name == OBJECT_END_MARKER_NAME {
                 break;
             }
             let data = self.read_field_value(&field.info)?;
-            let d = match field.info.field_type {
-                _ => {
-                    "a".to_string()
-                }
-            };
-            result.insert(field.name, d);
-            // REMOVE
-            x = 1;
+            result.insert(field.name, data);
         }
-
-        log::debug!("Deserialize result {:?}", result);
-
+        
         Ok(XrplType::StObject(
-            StObject {
-                transaction_type: None,
-                flags: None,
-                sequence: None,
-                last_ledger_sequence: None,
-                amount: None,
-                fee: None,
-                send_max: None,
-                signing_pub_key: None,
-                txt_signature: None,
-                account: None,
-                destination: None,
-                paths: None,
-                memos: None,
-            }
+            StObject::from(result)
         ))
+    }
+
+    pub fn deserialize_manifest(&mut self) {
+        // static SOTemplate const manifestFormat{
+        //     // A manifest must include:
+        //     // - the master public key
+        //     {sfPublicKey, soeREQUIRED},
+    
+        //     // - a signature with that public key
+        //     {sfMasterSignature, soeREQUIRED},
+    
+        //     // - a sequence number
+        //     {sfSequence, soeREQUIRED},
+    
+        //     // It may, optionally, contain:
+        //     // - a version number which defaults to 0
+        //     {sfVersion, soeDEFAULT},
+    
+        //     // - a domain name
+        //     {sfDomain, soeOPTIONAL},
+    
+        //     // - an ephemeral signing key that can be changed as necessary
+        //     {sfSigningPubKey, soeOPTIONAL},
+    
+        //     // - a signature using the ephemeral signing key, if it is present
+        //     {sfSignature, soeOPTIONAL},
+        // };
     }
 }
 

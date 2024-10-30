@@ -15,6 +15,7 @@ pub struct XrpldConfig {
     #[serde_as(as = "DisplayFromStr")]
     pub network_id: NetworkId,
     pub ssl_verify: Option<bool>,
+    pub bootstrap_nodes: Vec<IpItem>, 
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

@@ -5,7 +5,7 @@ use core::{fmt, fmt::{Debug, Formatter}};
 
 use super::amount::Amount;
 
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq, Debug, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum XrplType {
     AccountId(AccountId),
@@ -56,19 +56,41 @@ impl AccountId {
 #[derive(Clone, Eq, PartialEq, Deserialize, Serialize, Hash)]
 pub struct Blob(pub Vec<u8>);
 
-#[derive(Clone, Copy, Eq, PartialEq, Hash)]
+#[derive(Clone, Copy, Eq, Serialize, Deserialize, PartialEq, Hash)]
 pub struct Hash128(pub [u8; 16]);
 
-#[derive(Clone, Copy, Eq, PartialEq, Hash)]
+#[derive(Clone, Copy, Eq, Serialize, Deserialize, PartialEq, Hash)]
 pub struct Hash160(pub [u8; 20]);
 
-#[derive(Clone, Copy, Eq, PartialEq, Hash)]
+#[derive(Clone, Copy, Eq, Serialize, Deserialize, PartialEq, Hash)]
 pub struct Hash256(pub [u8; 32]);
 
 pub type UInt8 = u8;
 pub type UInt16 = u16;
 pub type UInt32 = u32;
 pub type Uint64 = u64;
+
+impl XrplType {
+    pub fn unwrap_u32(self) -> UInt32 {
+        match self {
+            XrplType::UInt32(v) => v,
+            _ => panic!("not a UInt32 type"),
+        }
+    }
+    pub fn unwrap_string(self) -> String {
+        match self {
+            XrplType::Hash256(v) => v.to_hex(),
+            XrplType::Blob(v) => v.to_hex(),
+            _ => panic!("not a Blob type"),
+        }
+    }
+    pub fn unwrap_object(self) -> StObject {
+        match self {
+            XrplType::StObject(v) => v,
+            _ => panic!("not a Blob type"),
+        }
+    }
+}
 
 impl Hash128 {
     pub fn from_hex(hex: &str) -> Result<Self, BinaryCodecError> {
@@ -142,16 +164,6 @@ impl Debug for Hash128 {
         for i in &self.0 {
             write!(f, "{:02X}", i)?;
         }
-        Ok(())
-    }
-}
-
-impl Debug for XrplType {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        if f.alternate() {
-            write!(f, "0x")?;
-        }
-        write!(f, "-")?;
         Ok(())
     }
 }
