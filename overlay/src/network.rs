@@ -2,8 +2,9 @@ use shared::enums::network::NetworkId;
 use shared::enums::utils::{LogType, Process};
 use shared::errors::error::Error;
 use shared::errors::network::{HandshakeError, PeerError};
+use shared::utils::config::xrpld_config;
 use shared::utils::logger::log;
-use shared::structs::config::{IpItem, XrpldConfig};
+use shared::structs::config::IpItem;
 use shared::structs::secp256k1_keys::Secp256k1Keys;
 use tokio::time::sleep;
 use std::net::SocketAddr;
@@ -27,20 +28,21 @@ pub struct Network {
 
 impl Network {
     /// Create new Network.
-    pub fn new(config: Arc<XrpldConfig>) -> Network {
-        let ips = Arc::new(if config.ips.is_empty() {
-            config.bootstrap_nodes.clone()
+    pub fn new() -> Network {
+        let xrpld_config = xrpld_config(None);
+        let ips = Arc::new(if xrpld_config.ips.is_empty() {
+            xrpld_config.bootstrap_nodes.clone()
         } else {
-            config.ips.clone()
+            xrpld_config.ips.clone()
         });
         Network {
             // nodes_max: 1,
             // peers: vec![],
             node_key: Arc::new(Secp256k1Keys::random()),
             peer_table: Arc::new(PeerTable::default()),
-            network_id: Arc::new(config.network_id.clone()),
+            network_id: Arc::new(xrpld_config.network_id.clone()),
             ips,
-            ssl_verify: config.ssl_verify.unwrap_or(true),
+            ssl_verify: xrpld_config.ssl_verify.unwrap_or(true),
             // nodes_max: 2, // TODO: fix
         }
     }

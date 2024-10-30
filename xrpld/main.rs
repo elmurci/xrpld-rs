@@ -1,21 +1,13 @@
 //! Experimental [XRP Ledger](https://xrpl.org/) node on [Rust](https://www.rust-lang.org/).
 //! Based on [rippled](https://github.com/ripple/rippled/), crated as learning project.
-
-use config::Config;
-use lazy_static::lazy_static;
 use overlay::Network;
-use shared::{enums::utils::{LogType, Process}, structs::config::XrpldConfig, utils::logger::{log, log_init}};
-use tokio::{sync::RwLock, task::JoinSet};
+use shared::{enums::utils::{LogType, Process}, utils::{config::xrpld_config, logger::{log, log_init}}};
+use tokio::task::JoinSet;
 use std::{num::ParseIntError, sync::Arc};
 
 mod args;
 
 const LOG_KEY:&str = "Main";
-
-// TODO: review this
-lazy_static! {
-    static ref SETTINGS: RwLock<Config> = RwLock::new(Config::default());
-}
 
 pub fn decode_hex(s: &str) -> Result<Vec<u8>, ParseIntError> {
     (0..s.len())
@@ -33,21 +25,17 @@ async fn main() {
 
     // let _args = args::get_args();
 
-    let settings = Config::builder()
-        .add_source(config::File::with_name("cfg/xrpld.json")) // TODO: read from command line
-        .add_source(config::Environment::with_prefix("XRPLD"))
-        .build()
-        .unwrap();
+    let xrpld_config = xrpld_config(None);
 
-    let config: Arc<XrpldConfig> = Arc::new(settings.try_deserialize::<XrpldConfig>().unwrap());
+    // let config: Arc<XrpldConfig> = Arc::new(settings.try_deserialize::<XrpldConfig>().unwrap());
 
     log(Process::Main, LogType::Info, LOG_KEY, String::from("Configuration loaded!"));
-    log(Process::Main, LogType::Debug, LOG_KEY, format!("Config {:?}", config));
+    log(Process::Main, LogType::Debug, LOG_KEY, format!("Config {:?}", xrpld_config));
 
     let mut set = JoinSet::new();
 
     set.spawn(async move {
-        let mut overlay = Network::new(config);
+        let mut overlay = Network::new();
         let _ = overlay.start().await;
     });
 

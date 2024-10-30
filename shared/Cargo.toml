@@ -9,7 +9,6 @@ license.workspace = true
 sha2.workspace = true
 secp256k1.workspace = true
 hex.workspace = true
-lazy_static.workspace = true
 bs58.workspace = true
 thiserror.workspace = true
 serde.workspace = true
@@ -22,6 +21,8 @@ native-tls.workspace = true
 xrpl_types.workspace = true
 spin.workspace = true
 ascii.workspace = true
+once_cell.workspace = true
+config.workspace = true
 
 # local
 proto = { path = "../proto" }
